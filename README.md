@@ -82,28 +82,73 @@ third is a *concentrated* population where the rare domains actually live.
 
 ## Architecture
 
+```mermaid
+flowchart TD
+    RAW["6 source .xlsx workbooks<br/><i>inconsistent headers, read by position</i>"]
+    MERGE["<b>merge_data.py</b><br/>dedupe + normalise"]
+    CORPUS[("en_ne_parallel.csv<br/><b>1,706,279 pairs</b>")]
+
+    RAW --> MERGE --> CORPUS
+
+    CORPUS --> S1
+
+    subgraph STAGE1["STAGE 1 · nemo_stage.py · GPU ~20 min · resumable"]
+        S1["<b>nvidia/domain-classifier</b><br/>deberta-v3, 26-label taxonomy<br/><i>reads the english column only</i>"]
+        ROUTE{"route by label<br/>+ confidence"}
+        S1 --> ROUTE
+    end
+
+    ROUTE -->|"<b>general</b> · 49.5%<br/>no overlap with our taxonomy"| GEN["General"]
+    ROUTE -->|"<b>direct</b> · 17.7%<br/>1:1 mapping"| DIR["Health · Education · Tech"]
+    ROUTE -->|"<b>finegrain</b> · 32.8%<br/>ambiguous or low confidence"| S2
+
+    subgraph STAGE2["STAGE 2 · finegrain_stage.py"]
+        SEED["<b>ollama llama3.2:3b</b><br/>weak-labels ~15k seeds<br/><i>temperature 0, targeted per bucket</i>"]
+        FT["<b>fastText</b><br/>trains on seeds<br/>bulk-predicts the finegrain rows"]
+        S2[" "]:::hidden
+        S2 --> SEED --> FT
+    end
+
+    GEN --> OUT
+    DIR --> OUT
+    FT --> OUT
+
+    OUT[("domain_classified.csv<br/>domain_splits/*.csv<br/>xlsx_out/*.xlsx")]
+    OUT --> EVAL["<b>evaluate</b><br/>vs hand-labelled gold set<br/><i>random · stratified · recall</i>"]
+
+    classDef hidden fill:none,stroke:none
+    classDef stage fill:#1f2937,stroke:#4b5563,color:#e5e7eb
+    classDef data fill:#0f766e,stroke:#14b8a6,color:#ecfeff
+    class CORPUS,OUT data
+```
+
+<details>
+<summary>Same thing as plain text</summary>
+
 ```
   6 source .xlsx workbooks  (inconsistent headers, read by position)
-            │
-            ▼  merge_data.py
+            |
+            v  merge_data.py
   en_ne_parallel.csv            1,706,279 pairs after dedupe
-            │
-            ▼  nemo_stage.py          [GPU, ~20 min, resumable]
+            |
+            v  nemo_stage.py          [GPU, ~20 min, resumable]
   nvidia/domain-classifier (deberta-v3) over the english column
-            │
-            ├── route=general    49.5%  no overlap  ────────► General   (final)
-            ├── route=direct     17.7%  1:1 mapping ────────► domain    (final)
-            └── route=finegrain  32.8%  ambiguous / low conf
-                      │
-                      ▼  finegrain_stage.py       [stage 2]
+            |
+            +-- route=general    49.5%  no overlap  ---------> General  (final)
+            +-- route=direct     17.7%  1:1 mapping ---------> domain   (final)
+            +-- route=finegrain  32.8%  ambiguous / low conf
+                      |
+                      v  finegrain_stage.py       [stage 2]
               ollama llama3.2:3b labels ~15k seed sentences
-                      │                 (weak supervision)
-                      ▼
+                      |                 (weak supervision, temperature 0)
+                      v
               fastText trains on seeds, bulk-predicts the finegrain rows
-                      │
-                      ▼
+                      |
+                      v
   domain_classified.csv  +  domain_splits/*.csv  +  xlsx_out/*.xlsx
 ```
+
+</details>
 
 Stage 1 writes a parquet checkpoint every 50k rows, so it is interruptible and
 resumable; stage 2's seeding appends per line for the same reason. Every step
@@ -129,6 +174,37 @@ perform comparably to those trained on human annotations
 (Pangakis & Wolken, ACL 2024, `2024.nlpcss-1.9`).
 
 The hand-labelled gold set is kept entirely separate and never trained on.
+
+### Measure your teacher before you scale it
+
+The single largest quality problem in this pipeline was not the student model,
+the features, or the amount of data. It was that the teacher was being sampled
+at ollama's **default temperature of 0.8** for what is a deterministic
+classification task.
+
+Asked the same sentence twice, `llama3.2:3b` gave:
+
+| Decoding | Self-agreement |
+|---|---|
+| default (temperature 0.8) | **56.7%** |
+| temperature 0 | **95.8%** |
+
+So roughly 40% of the seed labels were sampling noise. fastText then scored
+macro-F1 **0.424** in 5-fold cross-validation against those labels — which is
+close to the ceiling that noise permits, not a failure of fastText. Tuning the
+student would have been wasted effort.
+
+**Self-consistency is a cheap upper bound on what weak supervision can
+deliver, and it should be measured before generating a single seed.** Re-ask a
+sample of sentences and count how often the teacher agrees with itself; the
+student cannot reliably exceed that. It takes a couple of minutes and would
+have saved an entire seeding run here.
+
+Generalisable rules this produced, all now in `config.py`:
+
+- `temperature: 0` for any classification or extraction prompt.
+- `num_predict` capped to the shortest useful output.
+- `keep_alive` set so the model isn't reloaded per call.
 
 ### Targeted seeding — the part that actually mattered
 
@@ -207,19 +283,67 @@ fell below the 0.6 threshold and were routed to stage 2 regardless of label.
 
 | Domain | Pairs | Share |
 |---|---|---|
-| General | 937,813 | 54.96% |
-| Tech | 271,299 | 15.90% |
-| Admin | 154,767 | 9.07% |
-| Health | 131,887 | 7.73% |
-| Education | 129,167 | 7.57% |
-| Law | 39,752 | 2.33% |
-| Tourism | 28,337 | 1.66% |
-| Agriculture | 10,937 | 0.64% |
-| Climate | 2,320 | 0.14% |
+| General | 931,708 | 54.60% |
+| Tech | 260,499 | 15.27% |
+| Admin | 157,376 | 9.22% |
+| Health | 124,399 | 7.29% |
+| Education | 121,080 | 7.10% |
+| Law | 56,973 | 3.34% |
+| Tourism | 38,109 | 2.23% |
+| Agriculture | 13,180 | 0.77% |
+| Climate | 2,955 | 0.17% |
 
-**These are outputs, not accuracy.** No macro-F1 is claimed until the gold set
-is hand-labelled — see [Evaluation](#evaluation) and
-[Known issues](#known-issues).
+### Stage 2 classifier quality
+
+`evaluate_seeds.py`, 5-fold stratified cross-validation over the 15,048 seed
+sentences:
+
+| | accuracy | macro-F1 |
+|---|---|---|
+| **current** | **0.591** | **0.574** |
+
+Per class:
+
+| Domain | Precision | Recall | F1 | Support |
+|---|---|---|---|---|
+| Tech | 0.672 | 0.735 | 0.702 | 4,563 |
+| Climate | 0.798 | 0.574 | 0.668 | 282 |
+| Agriculture | 0.699 | 0.673 | 0.686 | 878 |
+| Health | 0.614 | 0.560 | 0.586 | 1,374 |
+| General | 0.515 | 0.540 | 0.527 | 2,141 |
+| Tourism | 0.566 | 0.481 | 0.520 | 928 |
+| Education | 0.515 | 0.497 | 0.506 | 1,552 |
+| Admin | 0.479 | 0.521 | 0.499 | 2,631 |
+| Law | 0.523 | 0.398 | 0.452 | 699 |
+
+How it got there — two changes, both worth more than any modelling idea:
+
+| Change | macro-F1 | Gain |
+|---|---|---|
+| baseline (temperature 0.8, `dim=50 epoch=10 wordNgrams=2`) | 0.424 | — |
+| teacher decoding at `temperature=0` | 0.503 | **+0.079** |
+| fastText hyperparameters from autotune | **0.574** | **+0.071** |
+
+**+0.150 macro-F1, +35% relative, from two parameter fixes.**
+
+### What these numbers are and are not
+
+The table above measures **fidelity to the `llama3.2:3b` seed labels** — how
+faithfully fastText reproduces its teacher on held-out sentences. It is a real
+and useful number: it catches unlearnable classes, shows which domains bleed
+into each other, and proved both fixes above. It is **not corpus accuracy**,
+because the labels are weak supervision from a 3B model rather than ground
+truth.
+
+Two things follow that are easy to get wrong:
+
+- A high score here would not prove the pipeline is accurate — it could mean
+  fastText faithfully reproduced a systematic error of the teacher.
+- The current 0.574 does not prove it is *inaccurate* either. A student that
+  smooths an idiosyncratic teacher can be more accurate than the teacher.
+
+Only the hand-labelled gold set settles it. See
+[Evaluation](#evaluation).
 
 ---
 
@@ -384,20 +508,33 @@ split, one label different out of 4,000.
 
 ## Known issues
 
-**Not yet evaluated.** No macro-F1 until the gold set is labelled. The
+**No corpus accuracy yet.** The gold set is built but not hand-labelled, so
+the only measured number is fidelity to the seed labels (0.574 macro-F1). The
 distribution table is output, not accuracy.
 
-**Tech is probably over-assigned.** It came out at 15.9%, and the LLM seeds
-were 28.7% Tech — well above any plausible rate. `Tech` is first in the
-prompt's domain list and `llama3.2:3b` likely has a positional bias toward it.
-If the gold set confirms this, reorder or reword the prompt and re-seed
-(~5 min).
+**Admin / Tech / General / Education bleed into each other.** They are the
+four lowest-F1 classes and the confusion matrix is densest between them — e.g.
+437 Tech→Admin and 498 Admin→Tech. Some of this is real ambiguity (a
+government circular about a software rollout is honestly both), but the
+pattern is strong enough to suspect the prompt isn't drawing the boundary
+clearly. Likely next step: give the teacher one-line domain definitions
+instead of a bare list.
 
-**Climate at 0.14% is below the usual merge threshold.** The common rule of
-thumb is that a class under ~0.5% of the corpus should merge into its nearest
-neighbour or into General. Worth deciding from per-class precision rather than
-share alone — if precision holds up it may still earn its place for NMT
-stratification.
+**`Tech` is listed first in the prompt.** It is also the largest seed class
+(30.3%). LLMs have a known positional bias toward early options in a list, so
+these may not be independent. Worth testing by shuffling the domain order and
+re-measuring the distribution.
+
+**Climate at 0.17% is below the usual merge threshold.** The rule of thumb is
+that a class under ~0.5% of the corpus should merge into its nearest
+neighbour. Its precision is the second-highest of any class (0.798) and recall
+the weakest (0.574) — a narrow but well-defined class. Worth keeping for NMT
+stratification; worth checking against the gold set first.
+
+**The teacher is a 3B model.** `llama3.2:3b` was chosen because it fits
+alongside the DeBERTa stage on 6GB of VRAM. A 7B teacher (`qwen2.5:7b` ~4.7GB
+quantised) is the obvious next lever if the gold set shows the labels are the
+limit.
 
 **Seed labels are weak supervision, not truth.** They come from a 3B model.
 The gold set is the only human-labelled data in the project.

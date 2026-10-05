@@ -41,9 +41,25 @@ SEED_FILE = p("labeled_seed.txt")
 FASTTEXT_MODEL = p("domain_classifier.bin")
 OLLAMA_MODEL = "llama3.2:3b"
 NUM_PREDICT = 5                        # we only want one word back
+# classification is deterministic - ollama's default temperature (0.8) made
+# the model disagree with itself on 43% of repeated sentences, which is pure
+# label noise. at 0 it agrees with itself 95.8% of the time.
+TEMPERATURE = 0.0
 KEEP_ALIVE = "30m"                     # keep it resident between calls
 N_PER_DOMAIN = 200                     # for the uniform-random seeding pass
 N_PER_BUCKET = 700                     # for the targeted pass
+
+# fastText hyperparameters, from a 300s autotune run against a stratified
+# 20% holdout. the defaults everyone copies (dim=50, epoch=10, wordNgrams=2)
+# scored macro-F1 0.503 on the same split; these score 0.568. the big win is
+# character n-grams (minn/maxn) - whole-word bigrams are too sparse on short
+# sentences.
+FT_DIM = 20
+FT_EPOCH = 100
+FT_LR = 0.831
+FT_WORD_NGRAMS = 5
+FT_MINN = 3
+FT_MAXN = 6
 
 # ── outputs ──────────────────────────────────────────────────────────────
 OUTPUT_FILE = p("domain_classified.csv")

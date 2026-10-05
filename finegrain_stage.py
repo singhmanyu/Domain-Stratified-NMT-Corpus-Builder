@@ -33,11 +33,14 @@ interruptible and can be re-run to top up.
 import os
 import time
 
+# config must be imported BEFORE ollama: it sets OLLAMA_HOST, and the ollama
+# client binds its host at import time. get this order wrong and the client
+# silently talks to the default port instead.
+import config as cfg
+
 import ollama
 import fasttext
 import pandas as pd
-
-import config as cfg
 
 DOMAINS = cfg.DOMAINS
 
@@ -87,7 +90,8 @@ def _label_sentences(sentences, seed_file=None, max_minutes=None):
                     model=cfg.OLLAMA_MODEL,
                     messages=[{"role": "user",
                                "content": PROMPT.format(sent=str(sent).strip())}],
-                    options={"num_predict": cfg.NUM_PREDICT},
+                    options={"num_predict": cfg.NUM_PREDICT,
+                             "temperature": cfg.TEMPERATURE},
                     keep_alive=cfg.KEEP_ALIVE,
                 )
                 label = resp["message"]["content"].strip()
@@ -173,10 +177,12 @@ def train_model(seed_file=None, model_file=None, threads=None, force=False):
     print("training fasttext...")
     model = fasttext.train_supervised(
         input=seed_file,
-        epoch=10,        # 9 classes and a few thousand lines; more overfits
-        lr=0.5,
-        wordNgrams=2,    # bigrams catch "climate change", "district office"
-        dim=50,          # 100/300 adds nothing at this data size
+        epoch=cfg.FT_EPOCH,
+        lr=cfg.FT_LR,
+        wordNgrams=cfg.FT_WORD_NGRAMS,
+        dim=cfg.FT_DIM,
+        minn=cfg.FT_MINN,          # character n-grams matter more than word
+        maxn=cfg.FT_MAXN,          # ones on sentences this short
         thread=threads or cfg.CPU_THREADS,
         loss="softmax",
     )
