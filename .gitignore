@@ -1,0 +1,33 @@
+# data - the corpus is ~10GB and isn't ours to redistribute
+data_raw/
+*.csv
+!sample_data/*.csv
+en_ne_parallel.csv
+domain_classified.csv
+domain_splits/
+gold_test_TO_LABEL.csv
+gold_test_labeled.csv
+
+# generated outputs
+stage1_out/
+xlsx_out/
+labeled_seed.txt
+*.bin
+
+# model caches
+hf_cache/
+ollama_models/
+
+# python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
