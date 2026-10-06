@@ -1,5 +1,6 @@
 """Orchestrator. Every step is resumable and takes a time budget.
 
+    python domain_classifier_nltm.py taxonomy               # what the domains are
     python domain_classifier_nltm.py status                 # progress, no gpu
     python domain_classifier_nltm.py probe                  # keyword sanity check
     python domain_classifier_nltm.py stage1 --budget 30     # nemo coarse split
@@ -24,16 +25,7 @@ import finegrain_stage as fg
 
 DOMAINS = cfg.DOMAINS
 
-PROBES = {
-    "Agriculture": ["farm", "crop", "irrigat", "livestock", "harvest", "soil"],
-    "Climate": ["climate", "monsoon", "rainfall", "glacier", "emission"],
-    "Tourism": ["tourist", "trek", "hotel", "heritage", "travel"],
-    "Admin": ["committee", "ministry", "notice", "department", "applicant"],
-    "Law": ["court", "act ", "clause", "petition", "tribunal"],
-    "Health": ["patient", "disease", "vaccine", "hospital", "symptom"],
-    "Education": ["student", "curriculum", "school", "examination", "teacher"],
-    "Tech": ["software", "computer", "internet", "digital", "network"],
-}
+PROBES = cfg.PROBES          # keywords live in the taxonomy, see config.py
 
 
 def _have_corpus():
@@ -47,6 +39,39 @@ def _have_corpus():
         print(f"...or put the files in {cfg.RAW_DIR} and run it with no "
               f"arguments. No data at all? sample_data/make_sample.py")
     return False
+
+
+def cmd_taxonomy():
+    """Print the taxonomy and everything derived from it.
+
+    Worth running after any edit to cfg.TAXONOMY: it shows which stage-1
+    categories get taken as-is, which go to stage 2, and which fall to
+    General - all of which are computed, so a mistake in the mapping shows
+    up here rather than nine hours into a run.
+    """
+    print(f"\n{len(cfg.DOMAINS)} domains\n")
+    for name, spec in cfg.TAXONOMY.items():
+        print(f"  {name}")
+        print(f"      {spec['description']}")
+        if spec["nemo"]:
+            print(f"      takes as-is: {', '.join(spec['nemo'])}")
+        if spec["partial"]:
+            print(f"      shares:      {', '.join(spec['partial'])}")
+
+    print(f"\nstage 1 decides outright ({len(cfg.DIRECT_MAP)} categories):")
+    for label, domain in sorted(cfg.DIRECT_MAP.items()):
+        print(f"  {label:<30} -> {domain}")
+
+    print(f"\nhanded to stage 2 ({len(cfg.AMBIGUOUS_LABELS)} categories):")
+    for label in sorted(cfg.AMBIGUOUS_LABELS):
+        claimants = [d for d, sp in cfg.TAXONOMY.items()
+                     if label in sp["nemo"] or label in sp["partial"]]
+        contested = " or ".join(claimants + [cfg.GENERAL_DOMAIN]
+                                if len(claimants) == 1 else claimants)
+        print(f"  {label:<30} -> {contested}")
+
+    print(f"\neverything else -> {cfg.GENERAL_DOMAIN}, without stage 2 running")
+    print(f"below {cfg.CONF_THRESHOLD} stage-1 confidence -> stage 2 regardless\n")
 
 
 def cmd_probe():
@@ -237,15 +262,17 @@ def cmd_evaluate():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", nargs="?", default="status",
-                    choices=["status", "probe", "stage1", "seed", "seed-targeted",
-                             "finish", "evaluate", "all"])
+                    choices=["taxonomy", "status", "probe", "stage1", "seed",
+                             "seed-targeted", "finish", "evaluate", "all"])
     ap.add_argument("--budget", type=float, default=None,
                     help="minutes of wall time before stopping cleanly")
     ap.add_argument("--no-combined", action="store_true",
                     help="skip the single big domain_classified.csv, splits only")
     args = ap.parse_args()
 
-    if args.cmd == "status":
+    if args.cmd == "taxonomy":
+        cmd_taxonomy()
+    elif args.cmd == "status":
         cmd_status()
     elif args.cmd == "probe":
         cmd_probe()

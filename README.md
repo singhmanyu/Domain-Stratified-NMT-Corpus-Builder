@@ -19,8 +19,10 @@ works out which column is which from the headers, the script, or the text
 itself, and `TARGET_COL` only decides what the column is called on the way
 out.
 
-The numbers below come from a 1,706,279-pair English–Nepali corpus, which is
-what it was built and measured on.
+The measured results further down come from the corpus it was developed on —
+1,706,279 English–Nepali pairs, which is what stage 2's seed labels were drawn
+from and what the reported figures were computed against. Nothing about the
+pipeline depends on that corpus or that language.
 
 ---
 
@@ -34,7 +36,7 @@ what it was built and measured on.
 - [Install](#install)
 - [Usage](#usage)
 - [Web UI](#web-ui)
-- [Another language pair](#another-language-pair)
+- [Another taxonomy, another language pair](#another-taxonomy-another-language-pair)
 - [Outputs](#outputs)
 - [Evaluation](#evaluation)
 - [Performance](#performance)
@@ -100,7 +102,7 @@ third is a *concentrated* population where the rare domains actually live.
 flowchart TD
     RAW["your parallel data<br/><i>xlsx or csv, any column names</i>"]
     MERGE["<b>parallel_input.py</b><br/>detect columns, dedupe"]
-    CORPUS[("en_ne_parallel.csv<br/><b>1,706,279 pairs</b>")]
+    CORPUS[("one corpus csv<br/><i>id, english, target</i>")]
 
     RAW --> MERGE --> CORPUS
 
@@ -143,7 +145,7 @@ flowchart TD
   your parallel data        (xlsx or csv, any column names)
             |
             v  parallel_input.py
-  en_ne_parallel.csv            1,706,279 pairs after dedupe
+  corpus csv                    deduped, id/english/target
             |
             v  nemo_stage.py          [GPU, ~20 min, resumable]
   nvidia/domain-classifier (deberta-v3) over the english column
@@ -445,6 +447,7 @@ mispaired corpus trains a broken model and looks fine doing it.
 Then:
 
 ```bash
+python domain_classifier_nltm.py taxonomy           # the domains + derived routing
 python domain_classifier_nltm.py status             # progress, no GPU needed
 python domain_classifier_nltm.py probe              # keyword sanity check
 python domain_classifier_nltm.py stage1 --budget 30 # NeMo pass, resumable
@@ -516,44 +519,72 @@ cat sentences.txt | python predict.py
 
 ---
 
-## Another language pair
+## Another taxonomy, another language pair
 
-The pipeline reads the English column and nothing else, so English–X works for
-any X with no code changes. In most cases there is nothing to do at all — drop
-the file in and the input reader works out the layout.
+Both are one edit. The pipeline reads the English column and nothing else, so
+English–X works for any X; and the domains are declared in one place that
+everything else derives from.
 
-Two optional settings:
+### The taxonomy
 
-```bash
-set NLTM_TARGET_COL=hindi      # what the translation column is called on the
-                               # way out. cosmetic; default is "target"
-```
+`config.TAXONOMY` is the only place domains are defined:
 
 ```python
-# config.py — the taxonomy. Stage 2 trains from scratch against whatever is
-# listed here, so there is no model to retrain by hand.
-DOMAINS = ["Tech", "Agriculture", "Climate", "Tourism",
-           "Admin", "Health", "Law", "Education", "General"]
+TAXONOMY = {
+    "Tech": {
+        "description": "computing, software, electronics, telecom, the internet",
+        "nemo":    ["Computers_and_Electronics", "Internet_and_Telecom"],
+        "partial": [],
+        "probe":   ["software", "computer", "internet"],
+    },
+    ...
+}
+GENERAL_DOMAIN = "General"
 ```
 
-If you change `DOMAINS`, also edit the three routing tables at the top of
-`nemo_stage.py` — `DIRECT_GENERAL`, `DIRECT_MAP` and `NEEDS_FINEGRAIN` — which
-map NVIDIA's 26 web categories onto your domains. That mapping is the only
-part of the pipeline that is taxonomy-specific, and it is three Python sets.
+| field | what it does |
+|---|---|
+| `description` | goes into the **seeding prompt**, so it directly shapes label quality |
+| `nemo` | NVIDIA categories that mean *only* this domain — stage 1 decides, stage 2 never runs |
+| `partial` | categories shared with ordinary prose (Science is sometimes Climate, usually just science) — stage 2 decides per sentence |
+| `probe` | keywords for the pre-flight `probe` check |
 
-What stays the same regardless of language:
+Everything else is **computed** from that: stage 1's routing tables, the
+seeding prompt, which buckets targeted seeding draws from, the keyword probe,
+and the UI's domain list. A category two domains both claim is ambiguous
+without anyone saying so; a category nobody claims falls to `GENERAL_DOMAIN`
+without stage 2 ever being paid for.
+
+```bash
+python domain_classifier_nltm.py taxonomy
+```
+
+prints the whole derivation, so a mistake in the mapping shows up in a second
+rather than nine hours into a run. A malformed taxonomy raises at import.
+
+There is no model to retrain by hand — stage 2 trains from scratch against
+whatever is declared. Re-run `seed` and `finish`.
+
+### The language pair
+
+Usually nothing to do: the input reader works out which column is which. One
+optional setting controls what the translation column is *called* on the way
+out:
+
+```bash
+set NLTM_TARGET_COL=hindi      # cosmetic; default is "target"
+```
 
 | | |
 |---|---|
 | Stage 1 | English-only model, so quality doesn't vary with the target language |
 | Stage 2 | trains on English seed sentences from *your* corpus |
 | Seeding | the teacher reads English, so no multilingual model is needed |
-| Alignment | the translation side is never touched, only carried |
+| Alignment | the translation side is never read, only carried |
 
 What to re-check for a new corpus: the domain distribution (a class under
-~0.5% should probably merge), and the stage-1 confidence threshold if your
-text is unlike web prose — very short or very technical sentences route to
-stage 2 more often.
+~0.5% should probably merge), and `CONF_THRESHOLD` if your text is unlike web
+prose — very short or very technical sentences route to stage 2 more often.
 
 ---
 
@@ -612,7 +643,7 @@ quietly turns the gold set into a measure of agreement rather than of truth.
 
 ## Performance
 
-Measured on an RTX 4050 Laptop (6 GB) and an 8-thread CPU, 1.7M pairs.
+Measured on an RTX 4050 Laptop (6 GB) and an 8-thread CPU.
 
 | Stage | GPU | CPU |
 |---|---|---|
@@ -671,7 +702,7 @@ quantization trap) and how they were diagnosed.
 ## Layout
 
 ```
-config.py                  all paths and tunables, env-overridable
+config.py                  the taxonomy, all paths and tunables
 parallel_input.py          any parallel xlsx/csv -> one corpus csv
 nemo_stage.py              stage 1: model wrapper, routing tables, chunking
 finegrain_stage.py         stage 2: seeding strategies, fastText

@@ -35,34 +35,13 @@ from huggingface_hub import PyTorchModelHubMixin
 
 import config as cfg
 
-# ── routing tables ───────────────────────────────────────────────────────
-
-# no overlap with our domains at all -> General, stage 2 never sees these
-DIRECT_GENERAL = {
-    "Adult", "Arts_and_Entertainment", "Autos_and_Vehicles", "Beauty_and_Fitness",
-    "Books_and_Literature", "Finance", "Games", "Hobbies_and_Leisure",
-    "Home_and_Garden", "Online_Communities", "People_and_Society", "Pets_and_Animals",
-    "Real_Estate", "Sensitive_Subjects", "Shopping", "Society", "Sports", "News",
-}
-
-# unambiguous 1:1
-DIRECT_MAP = {
-    "Health": "Health",
-    "Jobs_and_Education": "Education",
-    "Computers_and_Electronics": "Tech",
-    "Internet_and_Telecom": "Tech",
-}
-
-# straddles two or more of ours, so fasttext decides:
-#   Law_and_Government        -> Admin or Law
-#   Travel_and_Transportation -> Tourism or ordinary transit
-#   Science                   -> Climate or general science
-#   Business_and_Industrial   -> Agriculture or general industry
-#   Food_and_Drink            -> Agriculture or General
-NEEDS_FINEGRAIN = {
-    "Law_and_Government", "Travel_and_Transportation", "Science",
-    "Business_and_Industrial", "Food_and_Drink",
-}
+# ── routing ──────────────────────────────────────────────────────────────
+# All three tables are derived from cfg.TAXONOMY - see config.py. Nothing
+# here is taxonomy-specific any more, so retargeting the pipeline means
+# editing one dict rather than keeping four lists in agreement.
+DIRECT_MAP = cfg.DIRECT_MAP            # nemo category -> our domain, 1:1
+AMBIGUOUS = cfg.AMBIGUOUS_LABELS       # contested or shared -> stage 2
+GENERAL = cfg.GENERAL_DOMAIN
 
 
 class CustomModel(nn.Module, PyTorchModelHubMixin):
@@ -122,14 +101,17 @@ def classify_batch(sentences, tok, model, device, id2label):
 
 
 def route(label, score):
+    """Which of the three outcomes a stage-1 answer earns."""
     if score < cfg.CONF_THRESHOLD:
         return "finegrain"
-    if label in DIRECT_GENERAL:
-        return "general"
+    if label in AMBIGUOUS:
+        return "finegrain"
     if label in DIRECT_MAP:
         return "direct"
-    # unrecognised label (taxonomy drift) also falls through to stage 2
-    return "finegrain"
+    # Claimed by nobody -> General, and stage 2 never pays for it. An
+    # unrecognised label lands here too, which is the right default: a
+    # category the taxonomy has no opinion about isn't worth a model call.
+    return "general"
 
 
 def classify_frame(df, tok, model, device, id2label, batch_size=None, quiet=False):
@@ -166,7 +148,7 @@ def apply_routing(df, labels, scores):
     df["route"] = [route(l, s) for l, s in zip(labels, scores)]
 
     df["domain"] = None
-    df.loc[df["route"] == "general", "domain"] = "General"
+    df.loc[df["route"] == "general", "domain"] = GENERAL
     direct = df["route"] == "direct"
     df.loc[direct, "domain"] = df.loc[direct, "nemo_label"].map(DIRECT_MAP)
     return df

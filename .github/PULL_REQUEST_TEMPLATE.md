@@ -33,6 +33,7 @@ which split they came from.
 
 - [ ] Constants went in `config.py`, not inline
 - [ ] Nothing new assumes a specific target language (use `cfg.TARGET_COL`)
+- [ ] Nothing new hardcodes domain names (derive from `cfg.TAXONOMY`)
 - [ ] New CSV writes use `cfg.CSV_ENCODING` (utf-8-sig — non-Latin scripts in Excel)
 - [ ] `predict.Pipeline.classify()` still returns one row per input, in order
 - [ ] Comments explain *why*, not what

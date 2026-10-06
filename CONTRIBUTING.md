@@ -43,6 +43,12 @@ them has already cost someone a day:
 - **Keep seeding temperature at 0.** At ollama's default of 0.8 the labeller
   disagreed with itself on 43% of repeated sentences. That is pure label noise
   and it was worth ~0.15 macro-F1.
+- **Don't hardcode domain names.** The taxonomy is declared once in
+  `config.TAXONOMY`; routing, the seeding prompt, the probe and the UI are all
+  derived from it. The prompt used to retype the domain list as a string
+  literal, which meant editing the taxonomy silently left the teacher
+  labelling against the old one. Run `python domain_classifier_nltm.py
+  taxonomy` after any change.
 - **Predict in bulk.** `model.predict(list_of_sentences)` — looping one
   sentence at a time turns seconds into hours.
 - **Write CSVs as `utf-8-sig`.** Use `cfg.CSV_ENCODING`. The translation side

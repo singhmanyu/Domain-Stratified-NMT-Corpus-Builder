@@ -44,20 +44,30 @@ import pandas as pd
 
 DOMAINS = cfg.DOMAINS
 
-PROMPT = """Classify this English sentence into exactly one domain.
-Domains: Tech, Agriculture, Climate, Tourism, Admin, Health, Law, Education, General
-Reply with only the domain name, nothing else.
-Sentence: {sent}"""
+# Built from cfg.TAXONOMY, never retyped. The old version hardcoded the nine
+# domain names into this string, which meant editing config.DOMAINS silently
+# left the teacher labelling against the previous taxonomy.
+#
+# The descriptions are not decoration. A domain whose boundary the teacher has
+# to invent is a domain it labels inconsistently, and inconsistent labels are
+# noise the student then has to fit - the single largest controllable source
+# of error in the whole pipeline.
+def build_prompt(taxonomy=None):
+    taxonomy = taxonomy or cfg.TAXONOMY
+    lines = "\n".join(f"- {name}: {spec['description']}"
+                      for name, spec in taxonomy.items())
+    return ("Classify this English sentence into exactly one domain.\n\n"
+            f"{lines}\n\n"
+            "Reply with only the domain name, nothing else.\n"
+            "Sentence: {sent}")
 
-# which nemo buckets to draw targeted seeds from - the ones stage 1 routes to
-# finegrain, i.e. where our rare domains actually live
-SEED_BUCKETS = [
-    "Science",                    # -> Climate or general science
-    "Business_and_Industrial",    # -> Agriculture or general industry
-    "Food_and_Drink",             # -> Agriculture or General
-    "Travel_and_Transportation",  # -> Tourism or ordinary transit
-    "Law_and_Government",         # -> Admin or Law
-]
+
+PROMPT = build_prompt()
+
+# Which stage-1 buckets targeted seeding draws from: the ones routed to
+# stage 2, which is where the rare domains live. Derived, so it can't drift
+# out of step with the routing.
+SEED_BUCKETS = sorted(cfg.AMBIGUOUS_LABELS)
 
 
 def _label_sentences(sentences, seed_file=None, max_minutes=None):

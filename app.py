@@ -27,17 +27,8 @@ MAX_UPLOAD_ROWS = 200_000
 # bucket for rows with no english text to classify - they still come back
 UNCLASSIFIED = "Unclassified"
 
-DOMAIN_BLURB = {
-    "Tech": "computing, telecom, electronics",
-    "Agriculture": "farming, crops, livestock, food production",
-    "Climate": "weather, environment, climate change",
-    "Tourism": "travel, hospitality, destinations",
-    "Admin": "government administration, public services",
-    "Health": "medicine, disease, healthcare",
-    "Law": "legislation, courts, legal process",
-    "Education": "schooling, teaching, academia",
-    "General": "everything else",
-}
+# one line per domain, straight from the taxonomy - see config.py
+DOMAIN_BLURB = cfg.DOMAIN_DESCRIPTIONS
 
 EXAMPLES = [
     "The farmer planted rice in the terraced fields of Kavre.",

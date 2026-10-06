@@ -93,12 +93,155 @@ XLSX_PART_ROWS = 100_000
 # always utf-8-sig.
 CSV_ENCODING = "utf-8-sig"
 
-# The taxonomy. Change this and the pipeline follows - stage 2 is trained
-# from scratch against whatever is listed here, so there's no retraining step
-# to remember. Stage 1's routing tables in nemo_stage.py map NVIDIA's 26 web
-# categories onto these, and need editing to match if you change them.
-DOMAINS = ["Tech", "Agriculture", "Climate", "Tourism",
-           "Admin", "Health", "Law", "Education", "General"]
+# ── the taxonomy ─────────────────────────────────────────────────────────
+# This is the only place domains are defined. Everything else is derived
+# from it: stage 1's routing, the seeding prompt, which NVIDIA buckets get
+# targeted seeds, the keyword probe and the UI's domain list. Edit this dict
+# and the whole pipeline follows - there is no second list to keep in sync,
+# and stage 2 trains from scratch so there is no model to retrain by hand.
+#
+# Each entry:
+#   description  one line, in plain words. Goes into the seeding prompt, so
+#                it directly shapes label quality - a domain the teacher has
+#                to guess the boundary of is a domain it labels inconsistently.
+#   nemo         NVIDIA categories that mean this domain and only this
+#                domain. Stage 1's answer is taken as-is, stage 2 never runs.
+#   partial      categories this domain shares with ordinary prose - Science
+#                is sometimes Climate but usually just general science. These
+#                go to stage 2 to be decided per sentence.
+#
+#                A category two domains both claim is ambiguous too, without
+#                anyone marking it: Admin and Law both claim Law_and_Government.
+#                Unclaimed categories fall to GENERAL_DOMAIN without stage 2
+#                ever seeing them. All of that is computed below, not
+#                hand-maintained.
+#   probe        keywords for `probe`, the pre-flight sanity check. Crude on
+#                purpose - it answers "is this domain even present" before
+#                any GPU time is spent.
+#
+# NVIDIA's 26 categories, for reference when filling in `nemo`:
+#   Adult, Arts_and_Entertainment, Autos_and_Vehicles, Beauty_and_Fitness,
+#   Books_and_Literature, Business_and_Industrial, Computers_and_Electronics,
+#   Finance, Food_and_Drink, Games, Health, Hobbies_and_Leisure,
+#   Home_and_Garden, Internet_and_Telecom, Jobs_and_Education,
+#   Law_and_Government, News, Online_Communities, People_and_Society,
+#   Pets_and_Animals, Real_Estate, Science, Sensitive_Subjects, Shopping,
+#   Sports, Travel_and_Transportation
+TAXONOMY = {
+    "Tech": {
+        "description": "computing, software, electronics, telecom, the internet",
+        "nemo": ["Computers_and_Electronics", "Internet_and_Telecom"],
+        "partial": [],
+        "probe": ["software", "computer", "internet", "digital", "network"],
+    },
+    "Agriculture": {
+        "description": "farming, crops, livestock, irrigation, food production",
+        "nemo": [],
+        # most industry and most food writing is not about farming
+        "partial": ["Business_and_Industrial", "Food_and_Drink"],
+        "probe": ["farm", "crop", "irrigat", "livestock", "harvest", "soil"],
+    },
+    "Climate": {
+        "description": "weather, environment, climate change, natural disasters",
+        "nemo": [],
+        # most science writing is not about climate
+        "partial": ["Science"],
+        "probe": ["climate", "monsoon", "rainfall", "glacier", "emission"],
+    },
+    "Tourism": {
+        "description": "travel, hospitality, destinations, heritage sites, trekking",
+        "nemo": [],
+        # transport is mostly ordinary logistics, not tourism
+        "partial": ["Travel_and_Transportation"],
+        "probe": ["tourist", "trek", "hotel", "heritage", "travel"],
+    },
+    "Admin": {
+        "description": ("government administration and public services - an office "
+                        "issuing, registering, applying or announcing something"),
+        # shared with Law, so every Law_and_Government row goes to stage 2
+        "nemo": ["Law_and_Government"],
+        "partial": [],
+        "probe": ["committee", "ministry", "notice", "department", "applicant"],
+    },
+    "Health": {
+        "description": "medicine, disease, treatment, hospitals, public health",
+        "nemo": ["Health"],
+        "partial": [],
+        "probe": ["patient", "disease", "vaccine", "hospital", "symptom"],
+    },
+    "Law": {
+        "description": ("legislation, courts and legal process - a statute, a case, "
+                        "a judgment, a legal right or obligation"),
+        "nemo": ["Law_and_Government"],
+        "partial": [],
+        "probe": ["court", "act ", "clause", "petition", "tribunal"],
+    },
+    "Education": {
+        "description": "schooling, teaching, curriculum, examinations, academia",
+        "nemo": ["Jobs_and_Education"],
+        "partial": [],
+        "probe": ["student", "curriculum", "school", "examination", "teacher"],
+    },
+    # The fallback. Claims no NVIDIA category: everything unclaimed lands here
+    # anyway, and claiming one would make it compete with a real domain.
+    "General": {
+        "description": "everything else - ordinary prose that fits no domain above",
+        "nemo": [],
+        "partial": [],
+        "probe": [],
+    },
+}
+
+# which domain absorbs anything the taxonomy doesn't claim
+GENERAL_DOMAIN = "General"
+
+# ── derived from TAXONOMY - don't edit these ─────────────────────────────
+DOMAINS = list(TAXONOMY)
+DOMAIN_DESCRIPTIONS = {d: v["description"] for d, v in TAXONOMY.items()}
+PROBES = {d: v["probe"] for d, v in TAXONOMY.items() if v["probe"]}
+
+# invert the mapping: nemo category -> the domains that claim it
+_claims = {}
+_partial = set()
+for _domain, _spec in TAXONOMY.items():
+    for _label in _spec["nemo"]:
+        _claims.setdefault(_label, []).append(_domain)
+    for _label in _spec["partial"]:
+        _claims.setdefault(_label, []).append(_domain)
+        _partial.add(_label)
+
+# a category exactly one domain claims outright -> take stage 1's word for it
+DIRECT_MAP = {label: domains[0] for label, domains in _claims.items()
+              if len(domains) == 1 and label not in _partial}
+# contested between domains, or shared with ordinary prose -> stage 2 decides
+# per sentence. This is also exactly where the rare domains hide, so it is
+# what targeted seeding draws from.
+AMBIGUOUS_LABELS = {label for label, domains in _claims.items()
+                    if len(domains) > 1 or label in _partial}
+# anything else falls to GENERAL_DOMAIN without stage 2 ever seeing it
+
+
+def validate_taxonomy():
+    """Catch a malformed taxonomy at import rather than 9 hours into a run."""
+    if GENERAL_DOMAIN not in TAXONOMY:
+        raise ValueError(f"GENERAL_DOMAIN {GENERAL_DOMAIN!r} is not in TAXONOMY")
+    # read TAXONOMY, not the derived DOMAINS - DOMAINS is a snapshot taken at
+    # import, so validating against it would pass a taxonomy swapped in later
+    if len(TAXONOMY) < 2:
+        raise ValueError("a taxonomy needs at least two domains")
+    for domain, spec in TAXONOMY.items():
+        missing = {"description", "nemo", "partial", "probe"} - set(spec)
+        if missing:
+            raise ValueError(f"{domain} is missing {', '.join(sorted(missing))}")
+        if not spec["description"]:
+            raise ValueError(f"{domain} has no description - the seeding prompt "
+                             f"needs one, and a vague domain labels badly")
+    if TAXONOMY[GENERAL_DOMAIN]["nemo"] or TAXONOMY[GENERAL_DOMAIN]["partial"]:
+        raise ValueError(f"{GENERAL_DOMAIN} should claim no nemo categories - "
+                         f"everything unclaimed already falls to it")
+
+
+validate_taxonomy()
 
 # hf weights land here instead of the user profile
 os.environ.setdefault("HF_HOME", p("hf_cache"))
