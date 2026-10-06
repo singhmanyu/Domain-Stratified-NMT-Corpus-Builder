@@ -1,4 +1,4 @@
-# NLTM Domain Classifier
+# Domain-Stratified NMT Corpus Builder
 
 Splits a ~1.7M-pair English–Nepali parallel corpus into nine domains, so NMT
 models can be trained on domain-stratified data instead of one flat mix.
@@ -22,6 +22,7 @@ training set.
 - [Results](#results)
 - [Install](#install)
 - [Usage](#usage)
+- [Web UI](#web-ui)
 - [Outputs](#outputs)
 - [Evaluation](#evaluation)
 - [Performance](#performance)
@@ -432,6 +433,44 @@ python export_xlsx.py --domain climate   # one domain
 
 Every long step takes `--budget <minutes>` and stops cleanly; re-run to
 continue from where it stopped.
+
+---
+
+## Web UI
+
+Classifying one sentence through the batch scripts means reloading DeBERTa
+every time. `app.py` is a Gradio front end over `predict.py`, which holds
+both models open and answers per sentence.
+
+```bash
+set NLTM_DATA_DIR=E:\path\to\data        # windows
+python app.py                            # http://127.0.0.1:7860
+```
+
+Two tabs:
+
+- **Classify a sentence** — the domain, the confidence, which stage decided,
+  the stage-1 label it came from, and stage 2's full score list. The bars are
+  shown for every sentence but are only the actual decision when the card
+  says `stage 2 (fasttext)`; the card says which case it is.
+- **Classify a file** — a csv/xlsx in, a **zip of one `.xlsx` per domain**
+  out, plus `_summary.xlsx` with the row counts. Capped at 200k rows: past
+  that it's the batch pipeline's job, which checkpoints and resumes.
+
+Non-English columns ride along untouched. `Pipeline.classify()` returns one
+row per input row in input order — that is a contract, not a convenience,
+because the caller joins the result back onto the Nepali side positionally.
+Rows with no English text come back marked `skipped (empty)` and land in
+`unclassified.xlsx` rather than being dropped.
+
+`predict.py` is also a CLI:
+
+```bash
+python predict.py "The ward office issues birth certificates."
+→ Admin   0.994  stage 2 (fasttext)   The ward office issues birth certificates.
+
+cat sentences.txt | python predict.py
+```
 
 ---
 
