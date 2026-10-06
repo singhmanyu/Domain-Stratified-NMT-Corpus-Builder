@@ -26,8 +26,61 @@ pipeline depends on that corpus or that language.
 
 ---
 
+## What it costs
+
+The whole point of the two-stage design is that neither obvious approach is
+affordable. Labelling a 1.7M-pair corpus with an LLM means 1.7M LLM calls.
+Fine-tuning a classifier instead means building a training set by hand first,
+and that annotation — not the training — is what takes days.
+
+This pipeline asks the LLM about **0.88% of the corpus** and lets a cheap
+model generalise from it.
+
+| Approach | LLM calls | Sentences a human labels | Wall clock |
+|---|---|---|---|
+| Label the whole corpus with the LLM | 1,706,279 | 0 | **~43 h** *(extrapolated)* |
+| Hand-label a training set, then fine-tune a transformer | 0 | ~5,000–9,000 | **days of annotation** + ~1–2 h training *(estimate)* |
+| **This pipeline** | **15,048** | **0** | **~35 min** *(measured)* |
+
+**113× fewer LLM calls** than labelling the corpus directly, and no annotation
+at all.
+
+Where the ~35 minutes goes, on one RTX 4050 Laptop (6 GB):
+
+| Step | Time |
+|---|---|
+| Stage 1 — NeMo over 1,706,279 sentences | ~20 min |
+| Stage 2 — seeding 15,048 sentences with llama3.2:3b | ~15 min |
+| Stage 2 — fastText train + predict over the routed third | seconds |
+| **End to end** | **~35 min** |
+
+### Reading that table honestly
+
+The ~43 h figure is **extrapolated**, not measured: 1,706,279 × the measured
+0.09 s/call, serially. Batch it across more VRAM and it comes down.
+
+The fine-tuning row is an **estimate**, and the point of it is not that
+training is slow — it isn't, it's an hour or two. The cost is the labelled
+data it needs first. At a realistic few seconds per sentence, 5,000–9,000
+annotations is days of human work, and that work has to be redone whenever the
+taxonomy changes.
+
+**This is a comparison of cost, not of quality.** A properly hand-labelled
+fine-tune would very likely be *more accurate* than this pipeline. What this
+buys is a usable domain split in under an hour, on a laptop GPU, with nobody
+labelling anything — and a taxonomy you can change and re-run the same
+afternoon. If you need the best possible classifier and have the annotation
+budget, fine-tune. If you need a corpus split by Friday, this is the trade.
+
+The accuracy question is open and
+[the README is explicit about it](#what-these-numbers-are-and-are-not): the
+measured 0.574 macro-F1 is fidelity to the teacher, not corpus accuracy.
+
+---
+
 ## Contents
 
+- [What it costs](#what-it-costs)
 - [Why two stages](#why-two-stages)
 - [Taxonomy](#taxonomy)
 - [Architecture](#architecture)
@@ -650,6 +703,12 @@ Measured on an RTX 4050 Laptop (6 GB) and an 8-thread CPU.
 | Stage 1 — NeMo over the corpus | ~1,455 sent/sec → **~20 min** | ~50 sent/sec → ~9.4 h |
 | Stage 2 — seeding, ~15k calls | ~0.09 s/call → **~15 min** | ~14.6 s/call → hours |
 | Stage 2 — fastText train + predict | seconds | seconds |
+| **End to end, 1.7M pairs** | **~35 min** | ~17 h |
+
+CPU-only is slow but not blocked — every long step takes `--budget <minutes>`
+and resumes, so stage 1 overnight is a normal way to run this. See
+[What it costs](#what-it-costs) for how that compares to labelling the corpus
+with the LLM directly, or fine-tuning a classifier instead.
 
 Three things got ollama from 14.6 s/call to 0.09: the GPU, `num_predict=5`
 (only one word is wanted), and `keep_alive` so the model stays resident instead
