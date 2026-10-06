@@ -28,22 +28,25 @@ pipeline depends on that corpus or that language.
 
 ## What it costs
 
-The whole point of the two-stage design is that neither obvious approach is
-affordable. Labelling a 1.7M-pair corpus with an LLM means 1.7M LLM calls.
-Fine-tuning a classifier instead means building a training set by hand first,
-and that annotation — not the training — is what takes days.
+The two-stage design exists because the obvious approaches don't fit on a
+laptop. Fine-tuning an LLM for this task reported a **~2 day** ETA on the 6 GB
+GPU this was built on. Labelling the corpus with an LLM instead means 1.7M
+calls. Training a small classifier is quick, but needs a hand-labelled set
+first — and that annotation, not the training, is what costs days.
 
 This pipeline asks the LLM about **0.88% of the corpus** and lets a cheap
 model generalise from it.
 
 | Approach | LLM calls | Sentences a human labels | Wall clock |
 |---|---|---|---|
+| Fine-tune an LLM for the task | 0 | — | **~2 days** *(observed ETA, same GPU)* |
 | Label the whole corpus with the LLM | 1,706,279 | 0 | **~43 h** *(extrapolated)* |
-| Hand-label a training set, then fine-tune a transformer | 0 | ~5,000–9,000 | **days of annotation** + ~1–2 h training *(estimate)* |
+| Hand-label a training set, then fine-tune a small classifier | 0 | ~5,000–9,000 | **days of annotation** + ~1–2 h training *(estimate)* |
 | **This pipeline** | **15,048** | **0** | **~35 min** *(measured)* |
 
-**113× fewer LLM calls** than labelling the corpus directly, and no annotation
-at all.
+**113× fewer LLM calls** than labelling the corpus directly, no annotation at
+all, and the taxonomy can be changed and the whole thing re-run the same
+afternoon.
 
 Where the ~35 minutes goes, on one RTX 4050 Laptop (6 GB):
 
@@ -56,14 +59,25 @@ Where the ~35 minutes goes, on one RTX 4050 Laptop (6 GB):
 
 ### Reading that table honestly
 
-The ~43 h figure is **extrapolated**, not measured: 1,706,279 × the measured
-0.09 s/call, serially. Batch it across more VRAM and it comes down.
+Each row says where its number came from, because they are not the same kind
+of number.
 
-The fine-tuning row is an **estimate**, and the point of it is not that
-training is slow — it isn't, it's an hour or two. The cost is the labelled
-data it needs first. At a realistic few seconds per sentence, 5,000–9,000
-annotations is days of human work, and that work has to be redone whenever the
-taxonomy changes.
+**~2 days** is the training ETA actually reported when fine-tuning an LLM for
+this task on the same 6 GB laptop GPU. It is one observation on one machine,
+not a benchmark — a 24 GB card or a rented A100 changes it completely. It is
+in the table because it is the realistic alternative on the hardware most
+people doing this actually have.
+
+**~43 h** is **extrapolated**, not measured: 1,706,279 × the measured 0.09
+s/call, run serially. Batch it across more VRAM and it comes down.
+
+**The small-classifier row is an estimate**, and the point of it is not that
+training is slow — it isn't, it's an hour or two for a DeBERTa-sized model.
+The cost is the labelled data it needs first. At a realistic few seconds per
+sentence, 5,000–9,000 annotations is days of human work, and that work has to
+be redone whenever the taxonomy changes.
+
+**~35 min** is measured end to end on the GPU named above.
 
 **This is a comparison of cost, not of quality.** A properly hand-labelled
 fine-tune would very likely be *more accurate* than this pipeline. What this
