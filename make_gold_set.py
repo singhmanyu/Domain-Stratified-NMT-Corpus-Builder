@@ -52,7 +52,7 @@ def main():
 
     print(f"reading {os.path.basename(cfg.OUTPUT_FILE)}")
     df = pd.read_csv(cfg.OUTPUT_FILE,
-                     usecols=["english", "nepali", "domain"],
+                     usecols=[cfg.TEXT_COL, cfg.TARGET_COL, "domain"],
                      encoding=cfg.CSV_ENCODING)
     df = df[df["english"].notna()]
 
@@ -88,7 +88,7 @@ def main():
     # blanked for the human. `predicted` stays in the file so you can diff
     # afterwards, but label from the sentence - don't just agree with it.
     gold["domain"] = ""
-    gold = gold[["english", "nepali", "part", "predicted", "domain"]]
+    gold = gold[[cfg.TEXT_COL, cfg.TARGET_COL, "part", "predicted", "domain"]]
     gold.to_csv(cfg.GOLD_TO_LABEL, index=False, encoding=cfg.CSV_ENCODING)
 
     print(f"\nwrote {os.path.basename(cfg.GOLD_TO_LABEL)} - {len(gold)} rows to label")

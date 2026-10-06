@@ -245,7 +245,7 @@ def classify_file(upload, text_col, out_format, progress=gr.Progress()):
     out = predict.get_pipeline().classify(src[text_col].tolist())
 
     # classify() returns one row per input in order, so the other source
-    # columns - the nepali side - line up positionally and the output is
+    # columns - the translation side - line up positionally and the output is
     # still a usable parallel corpus
     assert len(out) == len(src), "pipeline changed row count"
     out = out.rename(columns={cfg.TEXT_COL: text_col})
@@ -309,8 +309,9 @@ with gr.Blocks(title="NLTM Domain Classifier") as demo:
     with gr.Tab("Classify a file"):
         gr.Markdown(
             f"A csv or xlsx of parallel data. The English column is worked out from the "
-            f"headers - `english`/`nepali`, `source`/`target`, `src`/`tgt` - or, when the "
-            f"headers don't say, from which column actually holds Devanagari. An `id` "
+            f"headers - `english`/`target`, `source`/`target`, `src`/`tgt`, or the "
+            f"language's own name - or, when the headers don't say, from which column "
+            f"is written in another script. An `id` "
             f"column is kept if there is one. Every other column is carried through "
             f"untouched and stays aligned, so the output is still a parallel corpus. "
             f"Up to {MAX_UPLOAD_ROWS:,} rows.\n\n"

@@ -1,5 +1,9 @@
 """Paths and shared settings.
 
+Everything language- and taxonomy-specific lives here. The pipeline reads the
+english column and nothing else, so changing TARGET_COL and DOMAINS is all it
+takes to point it at a different language pair or a different set of domains.
+
 Data lives outside the repo - it's ~10GB and the corpus isn't ours to
 redistribute. Point NLTM_DATA_DIR at wherever you keep it; everything else
 resolves from there.
@@ -71,14 +75,28 @@ XLSX_DIR = p("xlsx_out")
 GOLD_TO_LABEL = p("gold_test_TO_LABEL.csv")
 GOLD_LABELED = p("gold_test_labeled.csv")
 
-# ── misc ─────────────────────────────────────────────────────────────────
+# ── columns ──────────────────────────────────────────────────────────────
+# Only the english column is ever read by a model. The other side is carried
+# through untouched, which is why this works for english paired with any
+# language - nothing downstream knows or cares what TARGET_COL contains.
 TEXT_COL = "english"                   # the ONLY column ever classified
+# what the translation column is called in the output. purely cosmetic -
+# set NLTM_TARGET_COL=nepali, hindi, french... to have the output files use
+# that name instead.
+TARGET_COL = os.environ.get("NLTM_TARGET_COL") or "target"
+
+# ── misc ─────────────────────────────────────────────────────────────────
 # excel chokes well before its 1,048,576 row cap; 100k opens instantly
 XLSX_PART_ROWS = 100_000
-# the nepali side is devanagari and these get opened in excel on windows,
-# which assumes the ansi codepage unless there's a BOM. always utf-8-sig.
+# the target side is often in a non-latin script, and these files get opened
+# in excel on windows, which assumes the ansi codepage unless there's a BOM.
+# always utf-8-sig.
 CSV_ENCODING = "utf-8-sig"
 
+# The taxonomy. Change this and the pipeline follows - stage 2 is trained
+# from scratch against whatever is listed here, so there's no retraining step
+# to remember. Stage 1's routing tables in nemo_stage.py map NVIDIA's 26 web
+# categories onto these, and need editing to match if you change them.
 DOMAINS = ["Tech", "Agriculture", "Climate", "Tourism",
            "Admin", "Health", "Law", "Education", "General"]
 

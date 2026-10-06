@@ -4,16 +4,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
-Splits a ~1.7M-pair English–Nepali parallel corpus into nine domains, so NMT
-models can be trained on domain-stratified data instead of one flat mix.
+Splits a parallel corpus into domains, so NMT models can be trained on
+domain-stratified data instead of one flat mix.
 
 Two stages: NVIDIA's pretrained domain classifier answers the two thirds of
 the corpus it can answer cheaply, and an LLM-seeded fastText classifier
 handles the ambiguous third using a taxonomy NVIDIA's model doesn't have.
 
-Classification only ever reads the **English** side. The Nepali side is
-carried through untouched, so every output file is still a usable parallel
-training set.
+**Any language pair that has English on one side.** Classification only ever
+reads the **English** column — the other side is carried through untouched and
+stays aligned, so every output file is still a usable parallel training set.
+Nothing in the pipeline knows or cares what language it is: the input reader
+works out which column is which from the headers, the script, or the text
+itself, and `TARGET_COL` only decides what the column is called on the way
+out.
+
+The numbers below come from a 1,706,279-pair English–Nepali corpus, which is
+what it was built and measured on.
 
 ---
 
@@ -27,6 +34,7 @@ training set.
 - [Install](#install)
 - [Usage](#usage)
 - [Web UI](#web-ui)
+- [Another language pair](#another-language-pair)
 - [Outputs](#outputs)
 - [Evaluation](#evaluation)
 - [Performance](#performance)
@@ -275,9 +283,10 @@ easiest way to turn a 30-second step into an hours-long one.
 
 ### UTF-8 BOM on every CSV
 
-The Nepali side is Devanagari and these files get opened in Excel on Windows,
-which assumes the system ANSI codepage unless a BOM is present — producing
-mojibake across the entire Nepali column. Every CSV is written `utf-8-sig`.
+The translation side is frequently in a non-Latin script, and these files get
+opened in Excel on Windows, which assumes the system ANSI codepage unless a
+BOM is present — producing mojibake across the entire column. Every CSV is
+written `utf-8-sig`.
 `fix_csv_bom.py` repairs existing files by byte-level prepend.
 
 ---
@@ -415,10 +424,22 @@ python parallel_input.py corpus.xlsx --build         # write the corpus csv
 python parallel_input.py data/ --build               # a whole folder
 ```
 
-Detection goes header names → Devanagari content → column order, in that
-order. `english`/`nepali`, `source`/`target`, `src`/`tgt`, `SOURCE`/`TRANSLATE`
-and headerless files all work, an `id` column is kept if there is one, and if
-the layout is genuinely ambiguous it says so instead of guessing — a silently
+Detection goes **header names → script → English-ness → column order**:
+
+1. `english`/`target`, `source`/`target`, `src`/`tgt`, `en`/`hi`,
+   `SOURCE`/`TRANSLATE`, or the language's own name — `nepali`, `hindi`,
+   `arabic`, `french` and so on.
+2. A column in a **non-Latin script** is the translation side, whatever its
+   header claims. One rule covers Devanagari, Arabic, CJK, Cyrillic, Thai,
+   Tamil, Bangla and the rest, because it tests for *not Latin* rather than
+   listing scripts.
+3. For a **Latin-script** target — French, Vietnamese, Indonesian — script
+   says nothing, so each column is scored on English function words that
+   don't carry over into other Latin-script languages.
+4. Column order, and only with corroborating evidence.
+
+Headerless files work, an `id` column is kept if there is one, and if the
+layout is genuinely ambiguous it says so instead of guessing — a silently
 mispaired corpus trains a broken model and looks fine doing it.
 
 Then:
@@ -479,7 +500,8 @@ Two tabs:
 
 Non-English columns ride along untouched. `Pipeline.classify()` returns one
 row per input row in input order — that is a contract, not a convenience,
-because the caller joins the result back onto the Nepali side positionally.
+because the caller joins the result back onto the translation side
+positionally.
 Rows with no English text come back marked `skipped (empty)` and land in
 `unclassified.xlsx` rather than being dropped.
 
@@ -491,6 +513,47 @@ python predict.py "The ward office issues birth certificates."
 
 cat sentences.txt | python predict.py
 ```
+
+---
+
+## Another language pair
+
+The pipeline reads the English column and nothing else, so English–X works for
+any X with no code changes. In most cases there is nothing to do at all — drop
+the file in and the input reader works out the layout.
+
+Two optional settings:
+
+```bash
+set NLTM_TARGET_COL=hindi      # what the translation column is called on the
+                               # way out. cosmetic; default is "target"
+```
+
+```python
+# config.py — the taxonomy. Stage 2 trains from scratch against whatever is
+# listed here, so there is no model to retrain by hand.
+DOMAINS = ["Tech", "Agriculture", "Climate", "Tourism",
+           "Admin", "Health", "Law", "Education", "General"]
+```
+
+If you change `DOMAINS`, also edit the three routing tables at the top of
+`nemo_stage.py` — `DIRECT_GENERAL`, `DIRECT_MAP` and `NEEDS_FINEGRAIN` — which
+map NVIDIA's 26 web categories onto your domains. That mapping is the only
+part of the pipeline that is taxonomy-specific, and it is three Python sets.
+
+What stays the same regardless of language:
+
+| | |
+|---|---|
+| Stage 1 | English-only model, so quality doesn't vary with the target language |
+| Stage 2 | trains on English seed sentences from *your* corpus |
+| Seeding | the teacher reads English, so no multilingual model is needed |
+| Alignment | the translation side is never touched, only carried |
+
+What to re-check for a new corpus: the domain distribution (a class under
+~0.5% should probably merge), and the stage-1 confidence threshold if your
+text is unlike web prose — very short or very technical sentences route to
+stage 2 more often.
 
 ---
 
@@ -507,8 +570,9 @@ cat sentences.txt | python predict.py
 | `xlsx_out/*.xlsx` | per-domain workbooks, 100k-row parts |
 | `xlsx_out/chunks/*.xlsx` | whole corpus in original order, 100k-row chunks |
 
-Every row carries `id, english, nepali, source_file, nemo_label, nemo_score,
-route, domain, confidence`.
+Every row carries `id, english, <target>, source_file, nemo_label,
+nemo_score, route, domain, confidence`, where `<target>` is whatever
+`TARGET_COL` is set to.
 
 Excel files have **data on sheet 1 and run metadata on sheet 2** — source
 provenance, both stage configs, seed counts, routing split, domain

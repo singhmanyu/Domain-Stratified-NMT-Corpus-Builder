@@ -30,7 +30,7 @@ PART_ROWS = cfg.XLSX_PART_ROWS
 COLUMN_NOTES = [
     ("id", "row id from the source workbook"),
     ("english", "english side - the ONLY column the classifier reads"),
-    ("nepali", "nepali side - carried through untouched, never classified"),
+    (cfg.TARGET_COL, "translation side - carried through untouched, never classified"),
     ("source_file", "which of the 6 source workbooks this pair came from"),
     ("nemo_label", "raw label from nvidia/domain-classifier (26-class taxonomy)"),
     ("nemo_score", "nvidia/domain-classifier softmax confidence"),
@@ -118,7 +118,7 @@ def write_book(path, data, meta, data_sheet="data", part_note=None):
         ws = xl.sheets[data_sheet]
         ws.freeze_panes(1, 0)
         for i, col in enumerate(data.columns):
-            ws.set_column(i, i, 46 if col in ("english", "nepali") else 16)
+            ws.set_column(i, i, 46 if col in (cfg.TEXT_COL, cfg.TARGET_COL) else 16)
 
         ms = xl.sheets["metadata"]
         ms.freeze_panes(1, 0)

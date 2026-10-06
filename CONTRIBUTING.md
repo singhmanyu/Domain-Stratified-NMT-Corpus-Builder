@@ -45,11 +45,11 @@ them has already cost someone a day:
   and it was worth ~0.15 macro-F1.
 - **Predict in bulk.** `model.predict(list_of_sentences)` — looping one
   sentence at a time turns seconds into hours.
-- **Write CSVs as `utf-8-sig`.** Use `cfg.CSV_ENCODING`. The Nepali side is
-  Devanagari and these files get opened in Excel on Windows, which assumes the
-  ANSI codepage unless there's a BOM.
+- **Write CSVs as `utf-8-sig`.** Use `cfg.CSV_ENCODING`. The translation side
+  is often in a non-Latin script, and these files get opened in Excel on
+  Windows, which assumes the ANSI codepage unless there's a BOM.
 - **Don't change row counts or row order in `predict.Pipeline.classify()`.**
-  Callers join the result onto the Nepali side positionally. A dropped row
+  Callers join the result onto the translation side positionally. A dropped row
   silently mispairs every row after it. If you need to exclude something, mark
   it and pass it through — that's what the `skipped (empty)` stage is for.
 

@@ -52,9 +52,9 @@ class Pipeline:
         """Returns one row per input sentence, in the order given.
 
         Order and length are the contract here, not a convenience - callers
-        join these results back onto their own frame (the nepali side, in
-        this project), so dropping or reordering a row silently repairs
-        nothing and corrupts the pair.
+        join these results back onto their own frame (the translation
+        side), so dropping or reordering a row silently repairs nothing
+        and corrupts the pair.
         """
         text = (pd.Series(list(sentences), dtype="object")
                 .fillna("").astype(str).str.strip()

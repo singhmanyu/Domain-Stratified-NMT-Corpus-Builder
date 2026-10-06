@@ -39,8 +39,9 @@ writes the seed labels.
 ## Corpus
 
 The English–Nepali parallel corpus this was built for is not included and is
-not ours to redistribute. `sample_data/` holds a small synthetic sample so the
-scripts can be exercised without it.
+not ours to redistribute. The pipeline itself is tied to neither — it
+classifies the English side of any parallel corpus. `sample_data/` holds a
+small synthetic sample so the scripts can be exercised without it.
 
 Anything you classify stays yours. The pipeline reads the English side only
 and does not transmit it anywhere — both models run locally.

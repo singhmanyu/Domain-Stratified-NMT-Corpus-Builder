@@ -7,11 +7,13 @@ authors:
     email: abhi.nmt2022@gmail.com
 repository-code: https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder
 abstract: >-
-  A two-stage domain classifier that splits a large English-Nepali parallel
-  corpus into nine domains for stratified NMT training. Stage 1 routes with
-  nvidia/domain-classifier; the rows its taxonomy cannot place are decided by
-  a fastText classifier trained on LLM-generated seed labels, so no
-  hand-labelled training set is required.
+  A two-stage domain classifier that splits a parallel corpus into domains
+  for stratified NMT training. It reads only the English side, so it applies
+  to any language pair with English on one side, and the translation is
+  carried through aligned. Stage 1 routes with nvidia/domain-classifier; the
+  rows its taxonomy cannot place are decided by a fastText classifier trained
+  on LLM-generated seed labels, so no hand-labelled training set is
+  required.
 keywords:
   - domain classification
   - machine translation
@@ -20,4 +22,5 @@ keywords:
   - knowledge distillation
   - low-resource languages
   - nepali
+  - multilingual
 license: MIT
