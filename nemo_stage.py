@@ -132,7 +132,7 @@ def route(label, score):
     return "finegrain"
 
 
-def _classify_frame(df, tok, model, device, id2label, batch_size=None, quiet=False):
+def classify_frame(df, tok, model, device, id2label, batch_size=None, quiet=False):
     batch_size = batch_size or cfg.BATCH_SIZE
     sentences = (df[cfg.TEXT_COL].fillna("").astype(str)
                  .str.strip().str.replace("\n", " ", regex=False).tolist())
@@ -175,7 +175,7 @@ def apply_routing(df, labels, scores):
 def run_nemo_stage(df, batch_size=None):
     """single-shot, in-memory. for the gold set and smoke tests."""
     tok, model, device, id2label = load_classifier()
-    labels, scores = _classify_frame(df, tok, model, device, id2label, batch_size)
+    labels, scores = classify_frame(df, tok, model, device, id2label, batch_size)
     return apply_routing(df, labels, scores)
 
 
@@ -208,7 +208,7 @@ def run_nemo_chunked(input_file=None, chunk_rows=None, batch_size=None,
             break
 
         print(f"chunk {n} ({len(chunk):,} rows)")
-        labels, scores = _classify_frame(chunk, tok, model, device, id2label,
+        labels, scores = classify_frame(chunk, tok, model, device, id2label,
                                          batch_size, quiet=True)
         apply_routing(chunk, labels, scores)
         chunk.to_parquet(path, index=False)

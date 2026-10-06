@@ -1,9 +1,10 @@
 """Gradio front end for the two-stage domain classifier.
 
-    venv\\Scripts\\python.exe app.py
+    set NLTM_DATA_DIR=E:\\Machine Learning\\Dommain Classifier
+    python app.py
 
-Opens on http://127.0.0.1:7860. Two tabs: one sentence at a time, or a
-csv/xlsx of sentences in and a zip of per-domain excel files back out.
+Serves on http://127.0.0.1:7860. One sentence at a time, or a csv/xlsx in
+and a zip of per-domain excel files out.
 """
 
 import html
@@ -15,15 +16,15 @@ import zipfile
 import gradio as gr
 import pandas as pd
 
+import config as cfg
 import predict
-from finegrain_stage import DOMAINS
 
-OUT_DIR = "ui_out"
-# the deberta pass is the slow part; anything past this in one upload is
-# really a job for domain_classifier_nltm.py
+UI_DIR = cfg.p("ui_out")
+# the deberta pass is the cost here. past this, it's the batch pipeline's
+# job - it checkpoints and resumes, which a web request can't.
 MAX_UPLOAD_ROWS = 200_000
-# excel's hard ceiling is 1,048,576 rows; leave room for the header
-XLSX_MAX_ROWS = 1_000_000
+# bucket for rows with no english text to classify - they still come back
+UNCLASSIFIED = "Unclassified"
 
 DOMAIN_BLURB = {
     "Tech": "computing, telecom, electronics",
@@ -47,27 +48,33 @@ EXAMPLES = [
 ]
 
 # roles, not raw hex, so light/dark swap in one place. one blue hue for the
-# score bars - that list is a single series ranked by magnitude, not nine
-# identities, so a categorical palette would be the wrong encoding.
+# score bars: that list is a single series ranked by magnitude, not nine
+# identities, so a categorical palette would encode something that isn't there.
 CSS = """
 :root, .gradio-container {
-  --surface-0: #ffffff; --surface-1: #fcfcfb; --surface-2: #f4f3f0;
-  --border-1: #e4e2dd; --text-1: #0b0b0b; --text-2: #52514e; --text-3: #85837c;
+  --surface-1: #fcfcfb; --surface-2: #f4f3f0; --border-1: #e4e2dd;
+  --text-1: #0b0b0b; --text-2: #52514e; --text-3: #85837c;
   --series-1: #2a78d6; --series-wash: #e8f0fc;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]), :root:not([data-theme="light"]) .gradio-container {
-    --surface-0: #141413; --surface-1: #1a1a19; --surface-2: #232321;
-    --border-1: #34332f; --text-1: #ffffff; --text-2: #c3c2b7; --text-3: #8d8b81;
+    --surface-1: #1a1a19; --surface-2: #232321; --border-1: #34332f;
+    --text-1: #ffffff; --text-2: #c3c2b7; --text-3: #8d8b81;
     --series-1: #3987e5; --series-wash: #16253a;
   }
+}
+:root[data-theme="dark"], :root[data-theme="dark"] .gradio-container {
+  --surface-1: #1a1a19; --surface-2: #232321; --border-1: #34332f;
+  --text-1: #ffffff; --text-2: #c3c2b7; --text-3: #8d8b81;
+  --series-1: #3987e5; --series-wash: #16253a;
 }
 .gradio-container { max-width: 1120px !important; }
 
 #masthead { padding: 26px 0 6px; border-bottom: 1px solid var(--border-1); margin-bottom: 18px; }
 #masthead h1 { font-size: 1.65rem; font-weight: 640; letter-spacing: -0.021em;
   margin: 0 0 6px; color: var(--text-1); }
-#masthead p { margin: 0; color: var(--text-2); font-size: 0.925rem; line-height: 1.55; max-width: 64ch; }
+#masthead p { margin: 0; color: var(--text-2); font-size: 0.925rem;
+  line-height: 1.55; max-width: 64ch; }
 
 .card { background: var(--surface-1); border: 1px solid var(--border-1);
   border-radius: 14px; padding: 20px 22px; }
@@ -108,217 +115,234 @@ THEME = gr.themes.Base(
     radius_size=gr.themes.sizes.radius_md,
 )
 
+EMPTY_CARD = ('<div class="card"><div class="placeholder">'
+              "Enter a sentence to classify.</div></div>")
 
-def _pipeline():
-    return predict.get_pipeline()
 
+# ── single sentence ──────────────────────────────────────────────────────
 
-# --- single sentence ---------------------------------------------------------
-
-def _bars_html(scores, decided_by_stage2):
+def _bars_html(scores, decided_here):
+    if not scores:
+        return ""
     rows = sorted(scores.items(), key=lambda kv: -kv[1])
-    top = rows[0][0] if rows else None
-    sub = ("what the fasttext model saw" if decided_by_stage2
+    sub = ("what the fasttext model saw" if decided_here
            else "reference only - stage 1 made this call")
     out = [f'<div class="bars"><h4>Stage 2 scores</h4><p class="sub">{sub}</p>']
-    for dom, p in rows:
-        cls = "bar-row top" if dom == top else "bar-row"
+    for i, (domain, score) in enumerate(rows):
+        cls = "bar-row top" if i == 0 else "bar-row"
         out.append(
-            f'<div class="{cls}" title="{html.escape(dom)}: {p:.3f}">'
-            f'<span>{html.escape(dom)}</span>'
+            f'<div class="{cls}" title="{html.escape(domain)}: {score:.3f}">'
+            f"<span>{html.escape(domain)}</span>"
             f'<span class="bar-track"><span class="bar-fill" '
-            f'style="width:{max(p, 0.004) * 100:.1f}%"></span></span>'
-            f'<span class="val">{p:.2f}</span></div>'
+            f'style="width:{max(score, 0.004) * 100:.1f}%"></span></span>'
+            f'<span class="val">{score:.2f}</span></div>'
         )
     out.append("</div>")
     return "".join(out)
 
 
-EMPTY = '<div class="card"><div class="placeholder">Enter a sentence to classify.</div></div>'
-
-
 def classify_one(sentence):
     sentence = (sentence or "").strip()
     if not sentence:
-        return EMPTY
+        return EMPTY_CARD
 
-    row = _pipeline().classify_one(sentence)
-    domain = row["domain"]
-    stage2 = row["stage"].startswith("stage 2")
+    pipe = predict.get_pipeline()
+    row = pipe.classify_one(sentence)
+    stage2 = row["stage"] == predict.STAGE_FINEGRAIN
 
     return "".join([
         '<div class="card"><div class="verdict">',
-        f'<span class="dom">{html.escape(str(domain))}</span>',
-        f'<span class="conf">{row["confidence"]:.1%} confidence</span>',
+        f'<span class="dom">{html.escape(str(row["domain"]))}</span>',
+        f'<span class="conf">{float(row["confidence"]):.1%} confidence</span>',
         f'<span class="pill">{html.escape(row["stage"])}</span>',
         "</div>",
-        f'<p class="blurb">{html.escape(DOMAIN_BLURB.get(domain, ""))}</p>',
+        f'<p class="blurb">{html.escape(DOMAIN_BLURB.get(row["domain"], ""))}</p>',
         '<dl class="meta">',
         f'<dt>stage 1 label</dt><dd>{html.escape(str(row["nemo_label"]))}</dd>',
-        f'<dt>stage 1 score</dt><dd>{row["nemo_score"]:.3f}</dd>',
-        f'<dt>routed to</dt><dd>{"fasttext" if stage2 else "taken as-is"}</dd>',
+        f'<dt>stage 1 score</dt><dd>{float(row["nemo_score"]):.3f}</dd>',
+        f'<dt>decided by</dt><dd>{"fasttext" if stage2 else "stage 1, taken as-is"}</dd>',
         "</dl>",
-        _bars_html(_pipeline().fasttext_scores(sentence), stage2),
+        _bars_html(pipe.fasttext_scores(sentence), stage2),
         "</div>",
     ])
 
 
-# --- batch file --------------------------------------------------------------
+# ── batch file ───────────────────────────────────────────────────────────
 
-def _write_domain_zip(out, stem, work_dir):
-    """One xlsx per domain, zipped. Splits a domain into parts if it would
-    ever exceed excel's row ceiling."""
-    parts_dir = os.path.join(work_dir, f"{stem}_domains")
-    shutil.rmtree(parts_dir, ignore_errors=True)
-    os.makedirs(parts_dir, exist_ok=True)
+def _domain_zip(out, stem, work_dir):
+    """One xlsx per domain plus a summary sheet, zipped.
 
+    Splits a domain across parts at the same threshold the batch exporter
+    uses - excel technically holds a million rows but gets unusable long
+    before that.
+    """
+    staging = os.path.join(work_dir, f"{stem}_domains")
+    shutil.rmtree(staging, ignore_errors=True)
+    os.makedirs(staging, exist_ok=True)
+
+    part_rows = cfg.XLSX_PART_ROWS
     written = []
     for domain, group in out.groupby("domain", sort=True):
         name = str(domain).lower()
-        if len(group) <= XLSX_MAX_ROWS:
-            chunks = [(f"{name}.xlsx", group)]
+        if len(group) <= part_rows:
+            parts = [(f"{name}.xlsx", group)]
         else:
-            chunks = [
-                (f"{name}_part{i + 1:02d}.xlsx", group.iloc[i * XLSX_MAX_ROWS:(i + 1) * XLSX_MAX_ROWS])
-                for i in range((len(group) + XLSX_MAX_ROWS - 1) // XLSX_MAX_ROWS)
+            parts = [
+                (f"{name}_part{i + 1:02d}.xlsx", group.iloc[i * part_rows:(i + 1) * part_rows])
+                for i in range((len(group) + part_rows - 1) // part_rows)
             ]
-        for fname, chunk in chunks:
-            chunk.to_excel(os.path.join(parts_dir, fname), index=False, sheet_name=str(domain)[:31])
+        for fname, chunk in parts:
+            chunk.to_excel(os.path.join(staging, fname), index=False,
+                           sheet_name=str(domain)[:31])
             written.append(fname)
 
-    # a summary sheet so the zip explains itself without opening nine files
-    summary = (out["domain"].value_counts().rename_axis("domain").reset_index(name="rows"))
+    summary = out["domain"].value_counts().rename_axis("domain").reset_index(name="rows")
     summary["share %"] = (summary["rows"] / len(out) * 100).round(2)
-    summary.to_excel(os.path.join(parts_dir, "_summary.xlsx"), index=False)
+    summary.to_excel(os.path.join(staging, "_summary.xlsx"), index=False)
     written.append("_summary.xlsx")
 
     zip_path = os.path.join(work_dir, f"{stem}_domains.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for fname in written:
-            z.write(os.path.join(parts_dir, fname), arcname=fname)
+            z.write(os.path.join(staging, fname), arcname=fname)
 
-    shutil.rmtree(parts_dir, ignore_errors=True)
+    shutil.rmtree(staging, ignore_errors=True)
     return zip_path
 
 
-def classify_file(file, text_col, out_format, progress=gr.Progress()):
-    if file is None:
+def classify_file(upload, text_col, out_format, progress=gr.Progress()):
+    if upload is None:
         raise gr.Error("upload a csv or xlsx first")
 
-    path = file if isinstance(file, str) else file.name
-    ext = os.path.splitext(path)[1].lower()
+    path = upload if isinstance(upload, str) else upload.name
     progress(0.05, desc="reading file")
-    if ext in (".xlsx", ".xlsm"):
-        df = pd.read_excel(path)
+    if os.path.splitext(path)[1].lower() in (".xlsx", ".xlsm"):
+        src = pd.read_excel(path)
     else:
-        df = pd.read_csv(path, encoding="utf-8-sig")
+        src = pd.read_csv(path, encoding=cfg.CSV_ENCODING)
 
-    text_col = (text_col or "english").strip()
-    if text_col not in df.columns:
-        raise gr.Error(f"no column '{text_col}' - file has: {', '.join(map(str, df.columns))}")
-    if len(df) > MAX_UPLOAD_ROWS:
-        raise gr.Error(f"{len(df):,} rows is past the {MAX_UPLOAD_ROWS:,} limit for the ui - "
-                       f"use domain_classifier_nltm.py for a full corpus")
+    text_col = (text_col or cfg.TEXT_COL).strip()
+    if text_col not in src.columns:
+        raise gr.Error(f"no column '{text_col}' - this file has: "
+                       f"{', '.join(map(str, src.columns))}")
+    if len(src) > MAX_UPLOAD_ROWS:
+        raise gr.Error(f"{len(src):,} rows is over the {MAX_UPLOAD_ROWS:,} limit for the "
+                       f"ui - use domain_classifier_nltm.py for a full corpus")
+    if src.empty:
+        raise gr.Error("that file has no rows")
 
-    progress(0.15, desc=f"classifying {len(df):,} rows")
-    t0 = time.time()
-    out = _pipeline().classify(df[text_col].fillna("").astype(str).tolist())
+    progress(0.15, desc=f"classifying {len(src):,} rows")
+    started = time.time()
+    out = predict.get_pipeline().classify(src[text_col].tolist())
 
-    # carry the rest of the source columns through, so an en-ne pair file
-    # comes back out still paired
-    out = out.rename(columns={"english": text_col})
-    for c in [c for c in df.columns if c != text_col]:
-        out[c] = df[c].values[: len(out)]
+    # classify() returns one row per input in order, so the other source
+    # columns - the nepali side - line up positionally and the output is
+    # still a usable parallel corpus
+    assert len(out) == len(src), "pipeline changed row count"
+    out = out.rename(columns={cfg.TEXT_COL: text_col})
+    for col in src.columns:
+        if col != text_col:
+            out[col] = src[col].values
+
+    # blank rows have no domain, and groupby drops nulls - without this they
+    # would quietly go missing from the per-domain export. the uploader gets
+    # back every row they sent, in a file that says why.
+    out["domain"] = out["domain"].fillna(UNCLASSIFIED)
 
     progress(0.9, desc="writing output")
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(UI_DIR, exist_ok=True)
     stem = os.path.splitext(os.path.basename(path))[0]
     if out_format.startswith("zip"):
-        dest = _write_domain_zip(out, stem, OUT_DIR)
+        dest = _domain_zip(out, stem, UI_DIR)
     elif out_format.startswith("one xlsx"):
-        dest = os.path.join(OUT_DIR, f"{stem}_classified.xlsx")
+        dest = os.path.join(UI_DIR, f"{stem}_classified.xlsx")
         out.to_excel(dest, index=False)
     else:
-        dest = os.path.join(OUT_DIR, f"{stem}_classified.csv")
-        out.to_csv(dest, index=False, encoding="utf-8-sig")
+        dest = os.path.join(UI_DIR, f"{stem}_classified.csv")
+        out.to_csv(dest, index=False, encoding=cfg.CSV_ENCODING)
 
     counts = out["domain"].value_counts().rename_axis("domain").reset_index(name="rows")
     counts["share %"] = (counts["rows"] / len(out) * 100).round(2)
-    elapsed = time.time() - t0
+
+    elapsed = max(time.time() - started, 1e-9)
+    stage2_share = (out["stage"] == predict.STAGE_FINEGRAIN).mean() * 100
     note = (f"**{len(out):,} rows** in {elapsed:.1f}s &nbsp;·&nbsp; "
-            f"{len(out) / max(elapsed, 1e-9):,.0f} rows/s &nbsp;·&nbsp; "
-            f"{(out['stage'].str.startswith('stage 2')).mean() * 100:.1f}% needed stage 2 "
-            f"&nbsp;·&nbsp; {len(counts)} domains present")
+            f"{len(out) / elapsed:,.0f} rows/s &nbsp;·&nbsp; "
+            f"{stage2_share:.1f}% needed stage 2 &nbsp;·&nbsp; "
+            f"{len(counts)} domains present")
 
     return dest, counts, out.head(100), note
 
 
-# --- layout ------------------------------------------------------------------
+# ── layout ───────────────────────────────────────────────────────────────
 
-with gr.Blocks(title="NLTM Domain Classifier", theme=THEME, css=CSS) as demo:
+with gr.Blocks(title="NLTM Domain Classifier") as demo:
     gr.HTML(
         '<div id="masthead"><h1>NLTM Domain Classifier</h1>'
         "<p>Two stages. <code>nvidia/domain-classifier</code> labels the sentence; "
-        "anything its taxonomy can't place cleanly goes to a fasttext model trained "
-        "on this corpus. Classification reads English only.</p></div>"
+        "anything its taxonomy can't place cleanly goes to a fastText model trained "
+        "on this corpus. Only the English side is ever read.</p></div>"
     )
 
     with gr.Tab("Classify a sentence"):
         with gr.Row(equal_height=False):
             with gr.Column(scale=4):
-                sent = gr.Textbox(label="English sentence", lines=4, max_lines=8,
-                                  placeholder="Type or paste a sentence, then press Enter...")
+                sentence = gr.Textbox(label="English sentence", lines=4, max_lines=8,
+                                      placeholder="Type or paste a sentence, then press Enter...")
                 go = gr.Button("Classify", variant="primary", size="lg")
-                gr.Examples(EXAMPLES, inputs=sent, label="Try one")
+                gr.Examples(EXAMPLES, inputs=sentence, label="Try one")
             with gr.Column(scale=5):
-                result = gr.HTML(EMPTY)
+                result = gr.HTML(EMPTY_CARD)
 
-        go.click(classify_one, sent, result)
-        sent.submit(classify_one, sent, result)
+        go.click(classify_one, sentence, result)
+        sentence.submit(classify_one, sentence, result)
 
     with gr.Tab("Classify a file"):
         gr.Markdown(
-            f"A csv or xlsx with a column of English sentences. Other columns — a "
-            f"`nepali` column, say — ride along untouched, so the output is still "
-            f"usable as NMT pairs. Up to {MAX_UPLOAD_ROWS:,} rows.\n\n"
-            f"The default output is a **zip holding one Excel file per domain**, "
-            f"plus a `_summary.xlsx` with the row counts."
+            f"A csv or xlsx with a column of English sentences. Every other column - "
+            f"a `nepali` column, say - is carried through untouched and stays aligned, "
+            f"so the output is still a parallel corpus. Up to {MAX_UPLOAD_ROWS:,} rows.\n\n"
+            f"The default output is a **zip holding one Excel file per domain**, plus "
+            f"`_summary.xlsx` with the row counts."
         )
         with gr.Row(equal_height=False):
-            up = gr.File(label="csv / xlsx", file_types=[".csv", ".xlsx", ".xlsm"], scale=3)
+            upload = gr.File(label="csv / xlsx", file_types=[".csv", ".xlsx", ".xlsm"], scale=3)
             with gr.Column(scale=2):
-                col = gr.Textbox(label="Text column", value="english")
-                fmt = gr.Radio(
-                    ["zip of per-domain xlsx", "one xlsx", "one csv"],
-                    value="zip of per-domain xlsx", label="Output",
-                )
+                text_col = gr.Textbox(label="Text column", value=cfg.TEXT_COL)
+                out_format = gr.Radio(["zip of per-domain xlsx", "one xlsx", "one csv"],
+                                      value="zip of per-domain xlsx", label="Output")
                 run = gr.Button("Classify file", variant="primary")
 
         note = gr.Markdown()
         with gr.Row(equal_height=False):
-            dl = gr.File(label="Download", scale=3)
+            download = gr.File(label="Download", scale=3)
             counts = gr.Dataframe(label="Domain distribution", interactive=False, scale=2)
         preview = gr.Dataframe(label="First 100 rows", interactive=False, wrap=True)
 
-        run.click(classify_file, [up, col, fmt], [dl, counts, preview, note])
+        run.click(classify_file, [upload, text_col, out_format],
+                  [download, counts, preview, note])
 
     with gr.Tab("About"):
         gr.Markdown(
             "### Domains\n"
-            + "\n".join(f"- **{d}** — {DOMAIN_BLURB[d]}" for d in DOMAINS)
+            + "\n".join(f"- **{d}** - {DOMAIN_BLURB[d]}" for d in cfg.DOMAINS)
             + "\n\n### How a sentence is routed\n"
             "1. Stage 1 runs `nvidia/domain-classifier` (deberta-v3-base, 26 labels).\n"
             "2. Labels with no overlap with this taxonomy go straight to **General**; "
-            "labels that map 1:1 — Health, Jobs_and_Education, Computers_and_Electronics, "
-            "Internet_and_Telecom — are taken as-is.\n"
-            "3. Ambiguous labels, and anything under 0.6 stage-1 confidence, go to the "
-            "fasttext model, trained on llama3.2-labelled seed sentences from this corpus.\n\n"
-            "The score bars always show stage 2's view, but they are only the actual "
-            "decision when the card says `stage 2 (fasttext)`."
+            "the four that map 1:1 - Health, Jobs_and_Education, "
+            "Computers_and_Electronics, Internet_and_Telecom - are taken as-is.\n"
+            f"3. Ambiguous labels, and anything under {cfg.CONF_THRESHOLD} stage-1 "
+            "confidence, go to the fastText model, trained on llama3.2-labelled seed "
+            "sentences drawn from this corpus.\n\n"
+            "The score bars always show stage 2's view, but they are the actual "
+            f"decision only when the card reads `{predict.STAGE_FINEGRAIN}`."
         )
 
 
 if __name__ == "__main__":
-    print("loading models (first run takes a few seconds)...")
-    _pipeline()
-    demo.launch(server_name="127.0.0.1", server_port=7860, inbrowser=True)
+    print(f"data dir: {cfg.DATA_DIR}")
+    print("loading models...")
+    predict.get_pipeline()
+    # gradio 6 moved theme/css off the Blocks constructor onto launch()
+    demo.launch(theme=THEME, css=CSS, server_name="127.0.0.1",
+                server_port=7860, inbrowser=True)
