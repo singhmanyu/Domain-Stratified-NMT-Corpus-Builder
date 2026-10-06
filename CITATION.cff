@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: Domain-Stratified NMT Corpus Builder
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - alias: singhmanyu
+    email: abhi.nmt2022@gmail.com
+repository-code: https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder
+abstract: >-
+  A two-stage domain classifier that splits a large English-Nepali parallel
+  corpus into nine domains for stratified NMT training. Stage 1 routes with
+  nvidia/domain-classifier; the rows its taxonomy cannot place are decided by
+  a fastText classifier trained on LLM-generated seed labels, so no
+  hand-labelled training set is required.
+keywords:
+  - domain classification
+  - machine translation
+  - parallel corpus
+  - weak supervision
+  - knowledge distillation
+  - low-resource languages
+  - nepali
+license: MIT

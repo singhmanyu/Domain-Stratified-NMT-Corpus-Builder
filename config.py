@@ -13,7 +13,10 @@ from inside the data folder just works.
 
 import os
 
-DATA_DIR = os.environ.get("NLTM_DATA_DIR", os.getcwd())
+# `or os.getcwd()` and not a dict default: a var that is set but empty - which
+# is what `set NLTM_DATA_DIR=` leaves behind - would otherwise resolve every
+# path to a bare filename against an unknown directory
+DATA_DIR = os.environ.get("NLTM_DATA_DIR") or os.getcwd()
 
 
 def p(*parts):

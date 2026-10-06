@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Adapting this to another language pair or taxonomy
+    url: https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder/discussions
+    about: >-
+      The taxonomy lives in config.py and the stage-1 routing maps are in
+      nemo_stage.py. Open a discussion rather than an issue.
+  - name: Model licence questions
+    url: https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder/blob/main/NOTICE.md
+    about: >-
+      What the MIT licence here does and does not cover, especially if you
+      plan to publish the trained stage-2 model.

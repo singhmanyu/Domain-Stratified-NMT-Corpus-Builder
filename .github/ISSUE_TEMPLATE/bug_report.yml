@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the pipeline fails or produces wrong output
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: the README's **Known issues** section covers the traps
+        that have already bitten people — quantization, the model-loading
+        wrapper, seeding temperature, and the Excel/BOM encoding.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, and what came back. Paste the traceback in full if there is one.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where it happened
+      options:
+        - Stage 1 (nemo_stage.py)
+        - Stage 2 seeding (ollama)
+        - Stage 2 training/prediction (fastText)
+        - Web UI (app.py / predict.py)
+        - Export (export_xlsx.py)
+        - Data merge (merge_data.py)
+        - Somewhere else / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: command
+    attributes:
+      label: Exact command
+      placeholder: python domain_classifier_nltm.py stage1 --budget 30
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: |
+        OS, Python version, GPU (or CPU-only), and the output of:
+        `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: data
+    attributes:
+      label: Data it ran on
+      description: >-
+        Your own corpus, or `sample_data/`? Roughly how many rows? Don't paste
+        corpus content you can't share — a row count and a column list is
+        usually enough.

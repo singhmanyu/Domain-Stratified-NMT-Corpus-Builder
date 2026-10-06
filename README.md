@@ -1,5 +1,9 @@
 # Domain-Stratified NMT Corpus Builder
 
+[![CI](https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder/actions/workflows/ci.yml/badge.svg)](https://github.com/singhmanyu/Domain-Stratified-NMT-Corpus-Builder/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 Splits a ~1.7M-pair English–Nepali parallel corpus into nine domains, so NMT
 models can be trained on domain-stratified data instead of one flat mix.
 
@@ -27,6 +31,7 @@ training set.
 - [Evaluation](#evaluation)
 - [Performance](#performance)
 - [Known issues](#known-issues)
+- [Licence](#licence)
 
 ---
 
@@ -606,3 +611,44 @@ docs/NOTES.md              environment gotchas and war stories
 - [fastText](https://fasttext.cc/) — stage 2
 - [ollama](https://ollama.com/) + `llama3.2:3b` — seed labelling
 - Pangakis & Wolken, *Knowledge Distillation in Automated Annotation*, ACL 2024 — the weak-supervision framing
+
+---
+
+## Licence
+
+The code is MIT — see [`LICENSE`](LICENSE). Use it, change it, ship it.
+
+That licence covers this repository's code and nothing else. The models it
+runs have their own terms, and one of them has a condition worth knowing
+about before you publish anything you train with this:
+
+| | |
+|---|---|
+| `nvidia/domain-classifier` (stage 1) | Apache 2.0 |
+| fastText (stage 2) | MIT |
+| `llama3.2:3b` (seed labelling) | Llama 3.2 Community License |
+
+The stage-2 classifier learns from labels written by Llama 3.2, and the Llama
+licence places conditions on models built from Llama outputs — naming,
+attribution, and a monthly-active-user threshold. The trained `.bin` is
+gitignored, so **this repository ships code only and none of that applies to
+it.** It applies if you distribute the model you train.
+
+[`NOTICE.md`](NOTICE.md) has the detail, including how to sidestep the
+question entirely by seeding with a permissively licensed model instead — the
+pipeline doesn't care which one writes the labels.
+
+The corpus is not included and is not ours to redistribute. `sample_data/` is
+synthetic. Anything you classify stays on your machine: both models run
+locally and nothing is sent anywhere.
+
+## Contributing
+
+Issues and PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md), which lists
+the traps that have already cost someone a day, and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+## Citing
+
+See [`CITATION.cff`](CITATION.cff), or use GitHub's **Cite this repository**
+button.

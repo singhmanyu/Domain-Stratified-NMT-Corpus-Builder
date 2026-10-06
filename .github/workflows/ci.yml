@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The pipeline needs a GPU, an ollama server and a corpus none of which exist
+# on a runner, so this does not try to classify anything. It checks the things
+# that break silently: syntax, dead names, and whether config.py still
+# resolves without a data directory present.
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Compile every module
+        run: python -m compileall -q .
+
+      - name: Lint
+        run: |
+          pip install --quiet ruff
+          ruff check . --select E9,F63,F7,F82,F401,F841
+
+      - name: config.py resolves with no data dir
+        run: |
+          python -c "
+          import config as cfg
+          assert cfg.DATA_DIR
+          assert len(cfg.DOMAINS) == 9
+          assert cfg.CSV_ENCODING == 'utf-8-sig'
+          assert cfg.TEXT_COL == 'english'
+          print('config ok:', cfg.DATA_DIR)
+          "
+
+      # the sample workbooks are deliberately in the raw shape, disagreeing
+      # about column names the way the real sources do - merge_data.py is what
+      # normalises them, so all that can be checked here is id/source/target
+      - name: Sample data is readable and in the expected raw shape
+        run: |
+          pip install --quiet pandas openpyxl
+          python -c "
+          import glob, pandas as pd
+          files = sorted(glob.glob('sample_data/*.xlsx'))
+          assert files, 'no sample workbooks'
+          for f in files:
+              df = pd.read_excel(f)
+              assert len(df), f'{f} is empty'
+              assert df.shape[1] == 3, f'{f} has {df.shape[1]} columns, expected id/source/target'
+              print(f, len(df), 'rows', list(df.columns))
+          "

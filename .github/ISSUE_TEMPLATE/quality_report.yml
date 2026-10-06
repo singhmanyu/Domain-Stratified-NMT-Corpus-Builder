@@ -1,0 +1,45 @@
+name: Classification quality
+description: The pipeline runs, but the labels are wrong
+labels: [quality]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Useful reports name the confusion, not just "accuracy is low". The
+        README's **Results** section says what the published numbers do and
+        don't measure — a macro-F1 from a random sample is noise on the rare
+        classes, so check which split yours came from.
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Example sentences and their labels
+      description: >-
+        What the pipeline said, and what it should have said. `python
+        predict.py "<sentence>"` prints which stage decided, which is usually
+        the whole answer.
+      render: shell
+    validations:
+      required: true
+
+  - type: dropdown
+    id: decided_by
+    attributes:
+      label: Which stage decided these
+      description: The `stage` column, or the pill in the web UI.
+      options:
+        - stage 1 (direct)
+        - stage 1 (general)
+        - stage 2 (fasttext)
+        - Mixed / varies
+    validations:
+      required: true
+
+  - type: textarea
+    id: scale
+    attributes:
+      label: How widespread
+      description: >-
+        A handful of sentences, or a systematic confusion between two domains?
+        If you have a labelled set, paste the classification report.
+      render: shell
