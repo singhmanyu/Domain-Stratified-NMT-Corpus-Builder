@@ -17,6 +17,7 @@ import gradio as gr
 import pandas as pd
 
 import config as cfg
+import parallel_input
 import predict
 
 UI_DIR = cfg.p("ui_out")
@@ -216,21 +217,29 @@ def classify_file(upload, text_col, out_format, progress=gr.Progress()):
 
     path = upload if isinstance(upload, str) else upload.name
     progress(0.05, desc="reading file")
-    if os.path.splitext(path)[1].lower() in (".xlsx", ".xlsm"):
+    if os.path.splitext(path)[1].lower() in (".xlsx", ".xlsm", ".xls"):
         src = pd.read_excel(path)
     else:
         src = pd.read_csv(path, encoding=cfg.CSV_ENCODING)
 
-    text_col = (text_col or cfg.TEXT_COL).strip()
+    if src.empty:
+        raise gr.Error("that file has no rows")
+
+    # blank box means work it out from the file: header names first, then
+    # which column actually holds devanagari. an id column is kept if there
+    # is one. typing a column name overrides all of it.
+    text_col = (text_col or "").strip()
+    if not text_col:
+        try:
+            text_col = parallel_input.detect_columns(src)["english"]
+        except parallel_input.DetectionError as e:
+            raise gr.Error(str(e))
     if text_col not in src.columns:
         raise gr.Error(f"no column '{text_col}' - this file has: "
                        f"{', '.join(map(str, src.columns))}")
     if len(src) > MAX_UPLOAD_ROWS:
         raise gr.Error(f"{len(src):,} rows is over the {MAX_UPLOAD_ROWS:,} limit for the "
                        f"ui - use domain_classifier_nltm.py for a full corpus")
-    if src.empty:
-        raise gr.Error("that file has no rows")
-
     progress(0.15, desc=f"classifying {len(src):,} rows")
     started = time.time()
     out = predict.get_pipeline().classify(src[text_col].tolist())
@@ -299,16 +308,21 @@ with gr.Blocks(title="NLTM Domain Classifier") as demo:
 
     with gr.Tab("Classify a file"):
         gr.Markdown(
-            f"A csv or xlsx with a column of English sentences. Every other column - "
-            f"a `nepali` column, say - is carried through untouched and stays aligned, "
-            f"so the output is still a parallel corpus. Up to {MAX_UPLOAD_ROWS:,} rows.\n\n"
+            f"A csv or xlsx of parallel data. The English column is worked out from the "
+            f"headers - `english`/`nepali`, `source`/`target`, `src`/`tgt` - or, when the "
+            f"headers don't say, from which column actually holds Devanagari. An `id` "
+            f"column is kept if there is one. Every other column is carried through "
+            f"untouched and stays aligned, so the output is still a parallel corpus. "
+            f"Up to {MAX_UPLOAD_ROWS:,} rows.\n\n"
             f"The default output is a **zip holding one Excel file per domain**, plus "
             f"`_summary.xlsx` with the row counts."
         )
         with gr.Row(equal_height=False):
             upload = gr.File(label="csv / xlsx", file_types=[".csv", ".xlsx", ".xlsm"], scale=3)
             with gr.Column(scale=2):
-                text_col = gr.Textbox(label="Text column", value=cfg.TEXT_COL)
+                text_col = gr.Textbox(label="English column",
+                                      placeholder="auto-detect",
+                                      info="leave blank to detect it")
                 out_format = gr.Radio(["zip of per-domain xlsx", "one xlsx", "one csv"],
                                       value="zip of per-domain xlsx", label="Output")
                 run = gr.Button("Classify file", variant="primary")

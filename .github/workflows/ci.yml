@@ -45,8 +45,8 @@ jobs:
           "
 
       # the sample workbooks are deliberately in the raw shape, disagreeing
-      # about column names the way the real sources do - merge_data.py is what
-      # normalises them, so all that can be checked here is id/source/target
+      # about column names the way real exports do - parallel_input.py is what
+      # works out which is which, so all that can be checked here is the shape
       - name: Sample data is readable and in the expected raw shape
         run: |
           pip install --quiet pandas openpyxl

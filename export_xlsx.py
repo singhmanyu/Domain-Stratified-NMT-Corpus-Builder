@@ -12,7 +12,6 @@ parts are for reading and editing by hand.
 """
 
 import argparse
-import glob
 import os
 from datetime import datetime
 
@@ -52,8 +51,8 @@ def build_metadata(df):
     add("run", "generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     add("run", "total pairs in corpus", f"{len(df):,}")
 
-    add("source", "workbooks merged", len(glob.glob(os.path.join(cfg.RAW_DIR, "*.xlsx"))))
-    add("source", "exact duplicate pairs dropped in merge", "38,163")
+    if "source_file" in df.columns:
+        add("source", "input files", df["source_file"].nunique())
     if "source_file" in df.columns:
         for k, v in df["source_file"].value_counts().items():
             add("rows per workbook", str(k), f"{v:,}")

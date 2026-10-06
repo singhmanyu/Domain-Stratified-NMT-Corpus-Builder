@@ -35,7 +35,7 @@ body:
         - Stage 2 training/prediction (fastText)
         - Web UI (app.py / predict.py)
         - Export (export_xlsx.py)
-        - Data merge (merge_data.py)
+        - Reading the input file (parallel_input.py)
         - Somewhere else / not sure
     validations:
       required: true

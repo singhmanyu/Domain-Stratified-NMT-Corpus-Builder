@@ -90,8 +90,8 @@ third is a *concentrated* population where the rare domains actually live.
 
 ```mermaid
 flowchart TD
-    RAW["6 source .xlsx workbooks<br/><i>inconsistent headers, read by position</i>"]
-    MERGE["<b>merge_data.py</b><br/>dedupe + normalise"]
+    RAW["your parallel data<br/><i>xlsx or csv, any column names</i>"]
+    MERGE["<b>parallel_input.py</b><br/>detect columns, dedupe"]
     CORPUS[("en_ne_parallel.csv<br/><b>1,706,279 pairs</b>")]
 
     RAW --> MERGE --> CORPUS
@@ -132,9 +132,9 @@ flowchart TD
 <summary>Same thing as plain text</summary>
 
 ```
-  6 source .xlsx workbooks  (inconsistent headers, read by position)
+  your parallel data        (xlsx or csv, any column names)
             |
-            v  merge_data.py
+            v  parallel_input.py
   en_ne_parallel.csv            1,706,279 pairs after dedupe
             |
             v  nemo_stage.py          [GPU, ~20 min, resumable]
@@ -394,19 +394,34 @@ to verify the pipeline runs:
 
 ```bash
 python sample_data/make_sample.py
-mkdir %NLTM_DATA_DIR%\data_raw
-copy sample_data\*.xlsx %NLTM_DATA_DIR%\data_raw\
-python merge_data.py
+python parallel_input.py sample_data/*.xlsx --build
 python domain_classifier_nltm.py all
 ```
 
 45 made-up pairs spanning all nine domains, deliberately written into two
-workbooks with *different* column headers to exercise the merge. It smoke-tests
+workbooks with *different* column headers to exercise the detection. It smoke-tests
 the plumbing — accuracy on 45 rows is meaningless.
 
 ---
 
 ## Usage
+
+Point it at your parallel data first. Column names are worked out from the
+file, so there's nothing to configure:
+
+```bash
+python parallel_input.py corpus.xlsx                 # show what it found
+python parallel_input.py corpus.xlsx --build         # write the corpus csv
+python parallel_input.py data/ --build               # a whole folder
+```
+
+Detection goes header names → Devanagari content → column order, in that
+order. `english`/`nepali`, `source`/`target`, `src`/`tgt`, `SOURCE`/`TRANSLATE`
+and headerless files all work, an `id` column is kept if there is one, and if
+the layout is genuinely ambiguous it says so instead of guessing — a silently
+mispaired corpus trains a broken model and looks fine doing it.
+
+Then:
 
 ```bash
 python domain_classifier_nltm.py status             # progress, no GPU needed
@@ -593,7 +608,7 @@ quantization trap) and how they were diagnosed.
 
 ```
 config.py                  all paths and tunables, env-overridable
-merge_data.py              xlsx -> one csv, reads columns by position
+parallel_input.py          any parallel xlsx/csv -> one corpus csv
 nemo_stage.py              stage 1: model wrapper, routing tables, chunking
 finegrain_stage.py         stage 2: seeding strategies, fastText
 domain_classifier_nltm.py  orchestrator / CLI

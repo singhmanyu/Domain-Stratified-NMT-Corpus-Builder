@@ -37,14 +37,15 @@ PROBES = {
 
 
 def _have_corpus():
-    """every stage needs the merged csv - fail with a hint, not a traceback."""
+    """every stage needs the corpus csv - fail with a hint, not a traceback."""
     if os.path.exists(cfg.INPUT_FILE):
         return True
     print(f"no corpus at {cfg.INPUT_FILE}")
-    print("run merge_data.py first (it builds it from the xlsx in data_raw/)")
+    print("build it from your parallel data first:")
+    print("    python parallel_input.py <your.xlsx> --build")
     if not os.path.isdir(cfg.RAW_DIR):
-        print(f"...and {cfg.RAW_DIR} doesn't exist either - put the source "
-              f"workbooks there, or try sample_data/make_sample.py")
+        print(f"...or put the files in {cfg.RAW_DIR} and run it with no "
+              f"arguments. No data at all? sample_data/make_sample.py")
     return False
 
 
